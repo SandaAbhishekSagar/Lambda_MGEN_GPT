@@ -280,6 +280,10 @@ start_application() {
     
     source lambda_gpu_env/bin/activate
     
+    # Set PYTHONPATH to include the project root
+    export PYTHONPATH="${PWD}:${PYTHONPATH}"
+    print_status "PYTHONPATH set to: ${PYTHONPATH}"
+    
     # Check if Lambda GPU API exists
     if [ -f "services/chat_service/lambda_gpu_api.py" ]; then
         print_status "Starting Lambda GPU API server..."
