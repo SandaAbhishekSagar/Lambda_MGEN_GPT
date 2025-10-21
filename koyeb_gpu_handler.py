@@ -366,16 +366,16 @@ async def runpod_endpoint(request: Dict[str, Any]):
 @app.get("/performance")
 async def performance_endpoint():
     """Performance monitoring endpoint"""
-        try:
-            gpu_info = {}
-            if torch.cuda.is_available():
-                gpu_info = {
-                    "gpu_name": torch.cuda.get_device_name(0),
-                    "gpu_memory_total": f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB",
-                    "gpu_memory_allocated": f"{torch.cuda.memory_allocated() / 1e9:.2f} GB",
-                    "gpu_memory_cached": f"{torch.cuda.memory_reserved() / 1e9:.2f} GB",
-                    "gpu_utilization": f"{GPUtil.getGPUs()[0].load * 100:.1f}%" if GPU_AVAILABLE and GPUtil.getGPUs() else "N/A"
-                }
+    try:
+        gpu_info = {}
+        if torch.cuda.is_available():
+            gpu_info = {
+                "gpu_name": torch.cuda.get_device_name(0),
+                "gpu_memory_total": f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB",
+                "gpu_memory_allocated": f"{torch.cuda.memory_allocated() / 1e9:.2f} GB",
+                "gpu_memory_cached": f"{torch.cuda.memory_reserved() / 1e9:.2f} GB",
+                "gpu_utilization": f"{GPUtil.getGPUs()[0].load * 100:.1f}%" if GPU_AVAILABLE and GPUtil.getGPUs() else "N/A"
+            }
         
         return {
             "status": "healthy",
