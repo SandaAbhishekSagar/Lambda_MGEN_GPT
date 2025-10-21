@@ -1,1 +1,1 @@
-web: python koyeb_handler.py
+web: python koyeb_start.py

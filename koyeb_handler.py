@@ -383,4 +383,12 @@ if __name__ == "__main__":
     print("🚀 Starting Koyeb Northeastern Chatbot API")
     print("=" * 80)
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Get port from environment variable (Koyeb sets this)
+    port = int(os.getenv("PORT", 8000))
+    
+    uvicorn.run(
+        "koyeb_handler:app",
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
+    )
