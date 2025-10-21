@@ -1,26 +1,19 @@
 # Koyeb GPU Optimized Dockerfile
 # Northeastern University Chatbot - A100 GPU Optimized for Koyeb
-FROM nvidia/cuda:12.1-devel-ubuntu22.04
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
     curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create symlinks for python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
-    ln -s /usr/bin/python3.11 /usr/bin/python3
-
 # Upgrade pip
-RUN python -m pip install --upgrade pip
+RUN pip install --upgrade pip
 
 # Copy requirements first for better caching
 COPY requirements_gpu.txt .

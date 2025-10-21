@@ -22,11 +22,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-# GPU optimization imports
-import GPUtil
+# Performance monitoring imports
 import psutil
-from transformers import AutoTokenizer, AutoModel
 import numpy as np
+
+# GPU monitoring (optional)
+try:
+    import GPUtil
+    GPU_AVAILABLE = True
+except ImportError:
+    GPU_AVAILABLE = False
 
 # Import configuration
 from chroma_cloud_config import CHROMA_CLOUD_CONFIG
@@ -259,7 +264,9 @@ Answer:"""
             
             # Performance metrics
             gpu_memory = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
-            gpu_utilization = GPUtil.getGPUs()[0].load * 100 if GPUtil.getGPUs() else 0
+            gpu_utilization = 0
+            if GPU_AVAILABLE and GPUtil.getGPUs():
+                gpu_utilization = GPUtil.getGPUs()[0].load * 100
             
             result = {
                 "answer": answer,
@@ -359,16 +366,16 @@ async def runpod_endpoint(request: Dict[str, Any]):
 @app.get("/performance")
 async def performance_endpoint():
     """Performance monitoring endpoint"""
-    try:
-        gpu_info = {}
-        if torch.cuda.is_available():
-            gpu_info = {
-                "gpu_name": torch.cuda.get_device_name(0),
-                "gpu_memory_total": f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB",
-                "gpu_memory_allocated": f"{torch.cuda.memory_allocated() / 1e9:.2f} GB",
-                "gpu_memory_cached": f"{torch.cuda.memory_reserved() / 1e9:.2f} GB",
-                "gpu_utilization": f"{GPUtil.getGPUs()[0].load * 100:.1f}%" if GPUtil.getGPUs() else "N/A"
-            }
+        try:
+            gpu_info = {}
+            if torch.cuda.is_available():
+                gpu_info = {
+                    "gpu_name": torch.cuda.get_device_name(0),
+                    "gpu_memory_total": f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB",
+                    "gpu_memory_allocated": f"{torch.cuda.memory_allocated() / 1e9:.2f} GB",
+                    "gpu_memory_cached": f"{torch.cuda.memory_reserved() / 1e9:.2f} GB",
+                    "gpu_utilization": f"{GPUtil.getGPUs()[0].load * 100:.1f}%" if GPU_AVAILABLE and GPUtil.getGPUs() else "N/A"
+                }
         
         return {
             "status": "healthy",
