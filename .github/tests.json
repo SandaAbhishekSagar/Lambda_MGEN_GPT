@@ -1,0 +1,26 @@
+[
+  {
+    "input": {
+      "question": "What undergraduate programs does Northeastern University offer?"
+    },
+    "expected_output": {
+      "status": "COMPLETED"
+    }
+  },
+  {
+    "input": {
+      "question": "What are the admission requirements for Northeastern?"
+    },
+    "expected_output": {
+      "status": "COMPLETED"
+    }
+  },
+  {
+    "input": {
+      "question": "How much does tuition cost at Northeastern?"
+    },
+    "expected_output": {
+      "status": "COMPLETED"
+    }
+  }
+]

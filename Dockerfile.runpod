@@ -1,5 +1,5 @@
-# GitHub Deployment Dockerfile for RunPod
-# Northeastern University Chatbot - GPU Optimized
+# Optimized Dockerfile for RunPod deployment
+# GPU-accelerated Northeastern University Chatbot
 FROM python:3.11-slim
 
 # Set working directory

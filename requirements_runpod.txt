@@ -1,0 +1,29 @@
+# RunPod Optimized Requirements
+# Minimal dependencies for GPU-accelerated Northeastern University Chatbot
+
+# Core RunPod SDK
+runpod>=1.7.6
+
+# OpenAI and LangChain (optimized versions)
+openai>=1.6.1,<2.0.0
+langchain==0.1.0
+langchain-openai==0.0.2
+
+# Vector Database (optimized)
+chromadb==1.0.15
+
+# PyTorch with CUDA support (installed separately in Dockerfile)
+# torch>=2.0.0  # Installed via Dockerfile for GPU support
+
+# Essential utilities
+python-dotenv==1.0.0
+pydantic==2.5.0
+requests==2.31.0
+
+# Performance optimizations
+numpy<2.0.0
+typing-extensions>=4.0.0
+
+# Optional: Advanced NLP (minimal for performance)
+# sentence-transformers==2.2.2  # Only if needed for local embeddings
+# transformers==4.36.0  # Only if needed for local models
