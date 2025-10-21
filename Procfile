@@ -1,1 +1,1 @@
-web: python koyeb_start.py
+web: python koyeb_gpu_start.py

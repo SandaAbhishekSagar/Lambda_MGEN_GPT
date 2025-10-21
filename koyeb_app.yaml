@@ -1,9 +1,9 @@
-# Koyeb App Configuration
-# Northeastern University Chatbot
+# Koyeb GPU App Configuration
+# Northeastern University Chatbot - A100 GPU Optimized
 
-name: northeastern-chatbot
+name: northeastern-gpu-chatbot
 services:
-  - name: chatbot-api
+  - name: gpu-chatbot-api
     source:
       type: github
       repository: SandaAbhishekSagar/Lambda_MGEN_GPT
@@ -25,9 +25,20 @@ services:
         value: "localhost"
       - name: CHROMA_PORT
         value: "8000"
+      # GPU optimization environment variables
+      - name: CUDA_VISIBLE_DEVICES
+        value: "0"
+      - name: PYTORCH_CUDA_ALLOC_CONF
+        value: "max_split_size_mb:512"
+      - name: TOKENIZERS_PARALLELISM
+        value: "false"
     regions:
-      - fra
-    instance_type: starter
+      - fra  # Frankfurt region for GPU availability
+    instance_type: gpu-1  # GPU instance for A100
     scaling:
       min_instances: 0
-      max_instances: 3
+      max_instances: 2  # Limit for cost optimization
+    resources:
+      cpu: 4
+      memory: 16Gi
+      gpu: 1
