@@ -1,0 +1,21 @@
+# RunPod Environment Variables - ChromaDB Cloud Setup
+# Copy these variables to your RunPod endpoint configuration
+
+# OpenAI Configuration (Required)
+OPENAI_API_KEY=sk-proj-your-openai-api-key-here
+
+# ChromaDB Cloud Configuration (Your actual values)
+CHROMA_API_KEY=ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW
+CHROMA_TENANT=28757e4a-f042-4b0c-ad7c-9257cd36b130
+CHROMA_DATABASE=newtest
+
+# Optional (not needed for ChromaDB Cloud)
+CHROMA_HOST=localhost
+CHROMA_PORT=8000
+
+# GPU Configuration (Optional)
+CUDA_VISIBLE_DEVICES=0
+TOKENIZERS_PARALLELISM=false
+
+# Performance Configuration (Optional)
+PYTHONUNBUFFERED=1

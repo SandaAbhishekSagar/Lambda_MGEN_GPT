@@ -1,0 +1,21 @@
+# RunPod Environment Variables - Northeastern University Chatbot
+# Copy these variables to your RunPod endpoint configuration
+
+# OpenAI Configuration (Required)
+OPENAI_API_KEY=sk-proj-your-openai-api-key-here
+
+# ChromaDB Configuration (Required)
+CHROMA_API_KEY=your-chroma-api-key-here
+CHROMA_HOST=https://your-chroma-host.com
+CHROMA_PORT=8000
+
+# ChromaDB Optional Configuration (Defaults provided)
+CHROMA_TENANT=default_tenant
+CHROMA_DATABASE=default_database
+
+# GPU Configuration (Optional)
+CUDA_VISIBLE_DEVICES=0
+TOKENIZERS_PARALLELISM=false
+
+# Performance Configuration (Optional)
+PYTHONUNBUFFERED=1
