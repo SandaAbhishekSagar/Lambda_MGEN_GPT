@@ -41,11 +41,17 @@ jobs:
         
     - name: Build Docker image
       run: |
-        docker build --platform linux/amd64 -t northeastern-chatbot:${{ github.sha }} .
+        docker build --platform linux/amd64 --no-cache -t northeastern-chatbot:${{ github.sha }} .
         
     - name: Test Docker image
       run: |
         docker run --rm northeastern-chatbot:${{ github.sha }} python -c "print('Docker image test successful')"
+        
+    - name: Clean up Docker
+      if: always()
+      run: |
+        docker system prune -f
+        docker image prune -f
         
     - name: Deploy to RunPod (on release)
       if: github.event_name == 'release'

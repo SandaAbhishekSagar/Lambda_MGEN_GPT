@@ -1,0 +1,25 @@
+# Minimal requirements for RunPod deployment
+# Optimized for space and performance
+
+# Core RunPod SDK
+runpod>=1.7.6
+
+# OpenAI and LangChain (minimal versions)
+openai>=1.6.1,<2.0.0
+langchain==0.1.0
+langchain-openai==0.0.2
+
+# Vector Database (minimal)
+chromadb==1.0.15
+
+# Essential utilities (minimal)
+python-dotenv==1.0.0
+pydantic==2.5.0
+requests==2.31.0
+
+# Performance optimizations (minimal)
+numpy<2.0.0
+typing-extensions>=4.0.0
+
+# PyTorch CPU version (smaller size)
+torch>=2.0.0
