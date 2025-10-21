@@ -17,7 +17,8 @@ def test_imports():
         ('langchain_openai', 'LangChain OpenAI'),
         ('langchain', 'LangChain'),
         ('numpy', 'NumPy'),
-        ('requests', 'Requests')
+        ('requests', 'Requests'),
+        ('pydantic', 'Pydantic')
     ]
     
     failed_imports = []

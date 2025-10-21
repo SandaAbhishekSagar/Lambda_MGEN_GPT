@@ -12,8 +12,8 @@ langchain-openai==0.0.2
 # Vector Database (optimized)
 chromadb==1.0.15
 
-# PyTorch with CUDA support (installed separately in Dockerfile)
-# torch>=2.0.0  # Installed via Dockerfile for GPU support
+# PyTorch with CUDA support
+torch>=2.0.0
 
 # Essential utilities
 python-dotenv==1.0.0

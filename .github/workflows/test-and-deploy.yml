@@ -37,7 +37,7 @@ jobs:
         
     - name: Run basic tests
       run: |
-        python test_imports_only.py
+        python test_github_actions.py
         
     - name: Build Docker image
       run: |
