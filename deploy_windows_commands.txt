@@ -1,0 +1,45 @@
+Windows Commands for Docker Deployment
+=====================================
+
+Run these commands in Command Prompt or PowerShell:
+
+1. Build Docker Image:
+   docker build -t northeastern-chatbot:latest .
+
+2. Tag for Docker Hub:
+   docker tag northeastern-chatbot:latest abhisheksagar308/northeastern-chatbot:latest
+
+3. Login to Docker Hub:
+   docker login
+   (Enter username: abhisheksagar308 and your password)
+
+4. Push to Docker Hub:
+   docker push abhisheksagar308/northeastern-chatbot:latest
+
+5. Verify the image:
+   docker images
+
+Alternative: Run the batch file
+==============================
+
+You can also just double-click on "deploy_windows.bat" to run all commands automatically.
+
+After successful push:
+=====================
+
+1. Go to https://console.runpod.io/serverless
+2. Click "New Endpoint"
+3. Select "Import from Docker Registry"
+4. Enter: docker.io/abhisheksagar308/northeastern-chatbot:latest
+5. Configure GPU settings (recommend 16GB+ GPU)
+6. Set environment variables:
+   - OPENAI_API_KEY=your_openai_key
+   - CHROMA_API_KEY=ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW
+   - CHROMA_TENANT=28757e4a-f042-4b0c-ad7c-9257cd36b130
+   - CHROMA_DATABASE=newtest
+   - CHROMA_HOST=localhost
+   - CHROMA_PORT=8000
+7. Deploy and test!
+
+Test input for RunPod:
+{"input": {"question": "What undergraduate programs does Northeastern offer?"}}

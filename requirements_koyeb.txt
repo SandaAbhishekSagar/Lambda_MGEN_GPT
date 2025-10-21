@@ -1,16 +1,16 @@
-# Koyeb Optimized Requirements - Northeastern University Chatbot
-# CPU-optimized dependencies for fast deployment
+# Koyeb Requirements - Northeastern University Chatbot
+# CPU-optimized dependencies for Koyeb deployment
 
 # Web Framework
 fastapi==0.108.0
 uvicorn==0.25.0
 
-# OpenAI and LangChain (minimal)
+# OpenAI and LangChain
 openai>=1.6.1,<2.0.0
 langchain==0.1.0
 langchain-openai==0.0.2
 
-# Vector Database (minimal)
+# Vector Database
 chromadb==1.0.15
 
 # Essential utilities

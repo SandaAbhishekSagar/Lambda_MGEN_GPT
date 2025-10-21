@@ -1,0 +1,33 @@
+# Koyeb App Configuration
+# Northeastern University Chatbot
+
+name: northeastern-chatbot
+services:
+  - name: chatbot-api
+    source:
+      type: github
+      repository: SandaAbhishekSagar/Lambda_MGEN_GPT
+      branch: main
+    ports:
+      - port: 8000
+        target_port: 8000
+        protocol: http
+    env:
+      - name: OPENAI_API_KEY
+        value: "your_openai_api_key_here"
+      - name: CHROMA_API_KEY
+        value: "ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW"
+      - name: CHROMA_TENANT
+        value: "28757e4a-f042-4b0c-ad7c-9257cd36b130"
+      - name: CHROMA_DATABASE
+        value: "newtest"
+      - name: CHROMA_HOST
+        value: "localhost"
+      - name: CHROMA_PORT
+        value: "8000"
+    regions:
+      - fra
+    instance_type: starter
+    scaling:
+      min_instances: 0
+      max_instances: 3
