@@ -1,47 +1,53 @@
-# RunPod Configuration for Northeastern University Chatbot
-# Optimized for GPU acceleration and fast response times
+# RunPod Serverless Configuration
+# Northeastern University Chatbot
 
-name: northeastern-university-chatbot
-description: "GPU-accelerated RAG chatbot for Northeastern University with 5-8 second response times"
-
-# Docker configuration
-docker:
-  image: "your-docker-username/northeastern-chatbot:v1.0.0"
-  platform: "linux/amd64"
-
-# GPU configuration for optimal performance
+# GPU Configuration
 gpu:
-  type: "RTX 4090"  # or "A100", "V100" based on availability
-  memory: "24GB"    # Minimum 16GB recommended
-  count: 1
+  type: "RTX 4090"  # Options: RTX 4090, A40, A100
+  memory: "24GB"
+  cuda_version: "12.1"
 
-# Environment variables (set these in RunPod console)
-environment:
-  OPENAI_API_KEY: "your_openai_api_key_here"
-  CHROMA_API_KEY: "your_chroma_api_key_here"
-  CHROMA_HOST: "your_chroma_host_here"
-  CHROMA_PORT: "8000"
-  CHROMA_TENANT: "default_tenant"
-  CHROMA_DATABASE: "default_database"
+# Container Configuration
+container:
+  image: "runpod/pytorch:2.1.0-py3.10-cuda12.1.0-devel"
+  env:
+    - OPENAI_API_KEY: ""  # Set in RunPod dashboard
+    - CHROMA_API_KEY: ""   # Set in RunPod dashboard
+    - CHROMA_HOST: "api.trychroma.com"
+    - CHROMA_PORT: "8000"
+    - CHROMA_TENANT: "default_tenant"
+    - CHROMA_DATABASE: "default_database"
+    - PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:512"
 
-# Performance settings
-performance:
-  workers: 1
-  timeout: 300  # 5 minutes
-  max_concurrent: 5
-  cold_start_timeout: 60
+# Serverless Settings
+serverless:
+  handler: "runpod_handler.handler"
+  max_workers: 10
+  min_workers: 0
+  max_concurrency: 10
+  idle_timeout: 30  # seconds
+  execution_timeout: 120  # seconds
+  
+# Resource Limits
+resources:
+  cpu: 8
+  memory: "32GB"
+  disk: "20GB"
 
-# Optimization settings
-optimization:
-  enable_gpu_acceleration: true
-  enable_caching: true
-  cache_ttl: 300  # 5 minutes
-  max_collections_search: 50
-  max_documents_per_query: 8
-  concurrent_searches: 8
+# Scaling
+scaling:
+  min_instances: 0
+  max_instances: 10
+  target_utilization: 0.7
 
-# Monitoring
-monitoring:
-  enable_logging: true
-  log_level: "INFO"
-  enable_metrics: true
+# Networking
+network:
+  enable_ipv6: false
+  ports:
+    - 8000
+
+# Logging
+logging:
+  level: "INFO"
+  format: "json"
+

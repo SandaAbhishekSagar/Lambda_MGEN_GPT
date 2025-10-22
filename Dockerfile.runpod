@@ -1,34 +1,41 @@
-# Optimized Dockerfile for RunPod deployment
-# GPU-accelerated Northeastern University Chatbot
-FROM python:3.11-slim
+# RunPod Serverless Dockerfile
+# GPU-optimized for Northeastern University Chatbot
+
+FROM runpod/pytorch:2.1.0-py3.10-cuda12.1.0-devel
 
 # Set working directory
-WORKDIR /
+WORKDIR /app
 
-# Install system dependencies for GPU support
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    git \
+    wget \
     curl \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch with CUDA support for GPU acceleration
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Copy requirements
+COPY runpod_requirements.txt requirements.txt
 
-# Copy and install Python requirements
-COPY requirements_runpod.txt .
-RUN pip install --no-cache-dir -r requirements_runpod.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy the optimized handler
-COPY runpod_optimized_handler.py .
+# Copy application files
+COPY runpod_handler.py .
+COPY services/ ./services/
 
-# Set environment variables for optimization
-ENV PYTHONUNBUFFERED=1
-ENV CUDA_VISIBLE_DEVICES=0
-ENV TOKENIZERS_PARALLELISM=false
+# Set Python path
+ENV PYTHONPATH=/app:$PYTHONPATH
 
-# Create non-root user for security
-RUN useradd -m -u 1000 runpod && chown -R runpod:runpod /
-USER runpod
+# Environment variables
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV TRANSFORMERS_CACHE=/runpod-volume/transformers-cache
+ENV HF_HOME=/runpod-volume/huggingface
 
-# Command to run when the container starts
-CMD ["python", "-u", "runpod_optimized_handler.py"]
+# Create cache directories
+RUN mkdir -p /runpod-volume/transformers-cache /runpod-volume/huggingface
+
+# RunPod handler
+CMD ["python", "-u", "runpod_handler.py"]
+

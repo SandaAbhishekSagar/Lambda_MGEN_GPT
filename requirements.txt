@@ -1,26 +1,43 @@
-# Koyeb Optimized Requirements - Northeastern University Chatbot
-# CPU-optimized dependencies for fast deployment
-
-# Web Framework
+# Web Framework (REQUIRED)
 fastapi==0.108.0
 uvicorn==0.25.0
 
-# OpenAI and LangChain (minimal)
+# OpenAI and LangChain (REQUIRED) - Fixed version conflicts
 openai>=1.6.1,<2.0.0
 langchain==0.1.0
 langchain-openai==0.0.2
+langchain-community==0.0.13
 
-# Vector Database (minimal)
+# Vector Database (REQUIRED)
 chromadb==1.0.15
 
-# Essential utilities
+# NLP and Embeddings (REQUIRED)
+sentence-transformers==2.2.2
+transformers==4.36.0
+torch>=2.0.0
+numpy<2.0.0
+
+# Utilities (REQUIRED)
 python-dotenv==1.0.0
 pydantic==2.5.0
+python-multipart==0.0.6
 requests==2.31.0
 
-# Performance optimizations
-numpy<2.0.0
-typing-extensions>=4.0.0
+# Optional: Web Scraping (can be omitted for initial deployment)
+# scrapy==2.11.0
+# scrapy-playwright==0.0.29
+# playwright==1.40.0
+# beautifulsoup4==4.12.2
 
-# PyTorch CPU version (smaller size)
-torch>=2.0.0
+# Optional: Advanced NLP (can be omitted for initial deployment)
+# spacy==3.7.2
+
+# Optional: Task Queue (not needed for Railway)
+# celery==5.3.4
+# redis==5.0.1
+
+# Optional: Local LLM (not needed with OpenAI)
+# ollama==0.1.7
+
+# Optional: Model Hub
+huggingface_hub==0.19.3  

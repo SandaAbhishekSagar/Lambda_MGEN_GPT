@@ -1,6 +1,6 @@
 """
 RunPod Serverless Handler for Northeastern University Chatbot
-GitHub Deployment Version - GPU-optimized RAG chatbot with ChromaDB and OpenAI
+GPU-optimized RAG chatbot with ChromaDB and OpenAI
 """
 
 import runpod
@@ -14,37 +14,30 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.prompts import PromptTemplate
 import time
 import json
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 print("=" * 80)
-print("🚀 RUNPOD GITHUB DEPLOYMENT - Northeastern University Chatbot")
+print("🚀 RUNPOD SERVERLESS - Northeastern University Chatbot")
 print("=" * 80)
 
-# Check GPU availability and optimize
+# Check GPU availability
 if torch.cuda.is_available():
     gpu_name = torch.cuda.get_device_name(0)
     gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
     print(f"✅ GPU Available: {gpu_name}")
     print(f"✅ GPU Memory: {gpu_memory:.1f} GB")
     print(f"✅ CUDA Version: {torch.version.cuda}")
-    
-    # Optimize GPU settings
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
-    print("✅ GPU optimizations enabled")
 else:
     print("⚠️ No GPU available - running on CPU")
 
-# Environment variables with fallbacks
+# Environment variables
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 CHROMA_API_KEY = os.getenv('CHROMA_API_KEY')
 CHROMA_TENANT = os.getenv('CHROMA_TENANT', 'default_tenant')
 CHROMA_DATABASE = os.getenv('CHROMA_DATABASE', 'default_database')
-CHROMA_HOST = os.getenv('CHROMA_HOST', 'localhost')
+CHROMA_HOST = os.getenv('CHROMA_HOST')
 CHROMA_PORT = int(os.getenv('CHROMA_PORT', '8000'))
 
 if not OPENAI_API_KEY:
@@ -57,124 +50,79 @@ print(f"✅ ChromaDB Port: {CHROMA_PORT}")
 
 
 class NortheasternChatbot:
-    """GPU-optimized RAG chatbot for Northeastern University with GitHub deployment optimizations"""
+    """GPU-optimized RAG chatbot for Northeastern University"""
     
     def __init__(self):
-        """Initialize the chatbot with optimized settings for GitHub deployment"""
-        print("\n[INIT] Initializing Northeastern Chatbot for GitHub deployment...")
+        """Initialize the chatbot with ChromaDB and OpenAI"""
+        print("\n[INIT] Initializing Northeastern Chatbot...")
         
-        # Initialize ChromaDB client with optimized settings
+        # Initialize ChromaDB client
         self.client = chromadb.HttpClient(
             host=CHROMA_HOST,
             port=CHROMA_PORT,
             settings=Settings(
                 chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                chroma_client_auth_credentials=CHROMA_API_KEY,
-                anonymized_telemetry=False,  # Disable telemetry for faster startup
-                allow_reset=False  # Disable reset for performance
+                chroma_client_auth_credentials=CHROMA_API_KEY
             )
         )
         
-        # Initialize OpenAI embeddings with optimized settings
+        # Initialize OpenAI embeddings
         self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",  # Fastest embedding model
-            openai_api_key=OPENAI_API_KEY,
-            chunk_size=1000,  # Optimize chunk size
-            max_retries=2,  # Reduce retries for speed
-            request_timeout=10  # Faster timeout
+            model="text-embedding-3-small",
+            openai_api_key=OPENAI_API_KEY
         )
         
-        # Initialize OpenAI LLM with optimized settings
+        # Initialize OpenAI LLM
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",  # Fastest GPT-4 model
-            temperature=0.2,  # Lower temperature for consistency
-            max_tokens=2000,  # Reduced for faster generation
+            model="gpt-4o-mini",
+            temperature=0.3,
+            max_tokens=2500,
             openai_api_key=OPENAI_API_KEY,
-            request_timeout=15,  # Faster timeout
-            max_retries=2,  # Reduce retries
-            streaming=False  # Disable streaming for simplicity
+            request_timeout=30
         )
         
-        # Cache for collections to avoid repeated API calls
-        self._collections_cache = None
-        self._cache_timestamp = 0
-        self._cache_ttl = 300  # 5 minutes cache
-        
-        # Thread pool for concurrent operations
-        self.executor = ThreadPoolExecutor(max_workers=4)
-        
-        print("✅ GitHub deployment chatbot initialized successfully")
+        print("✅ Chatbot initialized successfully")
     
-    def get_collections_cached(self) -> List:
-        """Get collections with caching to avoid repeated API calls"""
-        current_time = time.time()
-        
-        if (self._collections_cache is None or 
-            current_time - self._cache_timestamp > self._cache_ttl):
-            
-            print("[CACHE] Refreshing collections cache...")
-            try:
-                # Get all collections with pagination
-                all_collections = []
-                offset = 0
-                limit = 1000
-                
-                while True:
-                    try:
-                        collections_batch = self.client.list_collections(limit=limit, offset=offset)
-                        if not collections_batch or len(collections_batch) == 0:
-                            break
-                        all_collections.extend(collections_batch)
-                        if len(collections_batch) < limit:
-                            break
-                        offset += limit
-                    except:
-                        break
-                
-                # Filter for batch collections
-                batch_collections = [
-                    col for col in all_collections
-                    if 'batch' in col.name.lower() or 'ultra_optimized' in col.name.lower()
-                ]
-                
-                self._collections_cache = batch_collections
-                self._cache_timestamp = current_time
-                
-                print(f"[CACHE] Cached {len(batch_collections)} batch collections")
-                
-            except Exception as e:
-                print(f"[CACHE ERROR] {str(e)}")
-                return []
-        
-        return self._collections_cache
-    
-    def search_documents_optimized(self, query: str, n_results: int = 8) -> List[Dict]:
-        """Optimized document search with concurrent processing for GitHub deployment"""
+    def search_documents(self, query: str, n_results: int = 10) -> List[Dict]:
+        """Search ChromaDB for relevant documents"""
         try:
-            start_time = time.time()
-            
             # Generate query embedding
             query_embedding = self.embeddings.embed_query(query)
-            embedding_time = time.time() - start_time
-            print(f"[TIMING] Embedding generation: {embedding_time:.2f}s")
             
-            # Get cached collections
-            batch_collections = self.get_collections_cached()
-            
-            if not batch_collections:
-                print("[SEARCH] No batch collections found")
-                return []
-            
-            print(f"[SEARCH] Searching {len(batch_collections)} collections")
-            
-            # Limit collections for faster search
-            max_collections = min(50, len(batch_collections))
-            collections_to_search = batch_collections[:max_collections]
-            
+            # Search across batch collections
             all_documents = []
             
-            # Search collections concurrently
-            def search_collection(collection_obj):
+            # Get all collections with pagination
+            all_collections = []
+            offset = 0
+            limit = 1000
+            
+            while True:
+                try:
+                    collections_batch = self.client.list_collections(limit=limit, offset=offset)
+                    if not collections_batch or len(collections_batch) == 0:
+                        break
+                    all_collections.extend(collections_batch)
+                    if len(collections_batch) < limit:
+                        break
+                    offset += limit
+                except:
+                    break
+            
+            print(f"[SEARCH] Found {len(all_collections)} total collections")
+            
+            # Filter for batch collections
+            batch_collections = [
+                col for col in all_collections
+                if 'batch' in col.name.lower() or 'ultra_optimized' in col.name.lower()
+            ]
+            print(f"[SEARCH] Searching {len(batch_collections)} batch collections")
+            
+            # Search up to 100 collections
+            max_collections_to_search = 100
+            collections_searched = 0
+            
+            for collection_obj in batch_collections[:max_collections_to_search]:
                 try:
                     collection = self.client.get_collection(collection_obj.name)
                     
@@ -184,14 +132,14 @@ class NortheasternChatbot:
                         n_results=n_results * 2
                     )
                     
-                    documents = []
+                    # Process results
                     if results and results.get('documents') and results['documents'][0]:
                         for i, doc in enumerate(results['documents'][0]):
                             metadata = results['metadatas'][0][i] if results.get('metadatas') else {}
                             distance = results['distances'][0][i] if results.get('distances') else 1.0
                             doc_id = results['ids'][0][i] if results.get('ids') else str(i)
                             
-                            documents.append({
+                            all_documents.append({
                                 'id': doc_id,
                                 'content': doc,
                                 'metadata': metadata,
@@ -199,24 +147,14 @@ class NortheasternChatbot:
                                 'similarity': 1 - distance
                             })
                     
-                    return documents
+                    collections_searched += 1
+                    
+                    if collections_searched % 20 == 0:
+                        print(f"[SEARCH] Searched {collections_searched} collections, found {len(all_documents)} documents")
                 
                 except Exception as e:
-                    return []
+                    continue
             
-            # Use thread pool for concurrent searches
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                futures = [executor.submit(search_collection, col) for col in collections_to_search]
-                
-                for future in futures:
-                    try:
-                        documents = future.result(timeout=5)  # 5 second timeout per collection
-                        all_documents.extend(documents)
-                    except:
-                        continue
-            
-            search_time = time.time() - start_time
-            print(f"[TIMING] Total search time: {search_time:.2f}s")
             print(f"[SEARCH] Total documents found: {len(all_documents)}")
             
             # Deduplicate by document ID
@@ -237,8 +175,8 @@ class NortheasternChatbot:
             print(f"[SEARCH ERROR] {str(e)}")
             return []
     
-    def generate_answer_optimized(self, question: str, context_docs: List[Dict]) -> Dict[str, Any]:
-        """Generate answer with optimized prompt and settings for GitHub deployment"""
+    def generate_answer(self, question: str, context_docs: List[Dict]) -> Dict[str, Any]:
+        """Generate answer using LLM with retrieved context"""
         try:
             # Prepare context
             if not context_docs:
@@ -248,30 +186,32 @@ class NortheasternChatbot:
                     'confidence': 'low'
                 }
             
-            # Build optimized context (limit to top 3 documents for speed)
+            # Build context string
             context_parts = []
-            for i, doc in enumerate(context_docs[:3], 1):
+            for i, doc in enumerate(context_docs[:5], 1):
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
                 source = metadata.get('source', 'Unknown')
-                
-                # Truncate content for faster processing
-                if len(content) > 1000:
-                    content = content[:1000] + "..."
                 
                 context_parts.append(f"[Source {i}] {source}\n{content}\n")
             
             context = "\n".join(context_parts)
             
-            # Optimized prompt for faster generation
-            prompt_template = """Answer this question about Northeastern University using the provided context.
+            # Create prompt
+            prompt_template = """You are a helpful assistant for Northeastern University. Answer the question based on the provided context.
 
-Context:
+Context from Northeastern University documents:
 {context}
 
 Question: {question}
 
-Provide a concise, accurate answer based on the context. Include specific details when available.
+Instructions:
+- Provide a detailed, comprehensive answer about Northeastern University
+- Use information from the context provided above
+- Structure your response clearly with bullet points or paragraphs
+- Include specific details like numbers, dates, requirements, or procedures when available
+- If the context contains relevant information, provide a thorough answer
+- Be helpful and informative about Northeastern's programs, policies, and offerings
 
 Answer:"""
             
@@ -287,7 +227,7 @@ Answer:"""
             
             # Prepare sources
             sources = []
-            for doc in context_docs[:3]:
+            for doc in context_docs[:5]:
                 metadata = doc.get('metadata', {})
                 sources.append({
                     'source': metadata.get('source', 'Unknown'),
@@ -296,7 +236,7 @@ Answer:"""
                 })
             
             # Determine confidence
-            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:3]) / min(3, len(context_docs))
+            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:5]) / min(5, len(context_docs))
             if avg_similarity > 0.7:
                 confidence = 'high'
             elif avg_similarity > 0.5:
@@ -320,20 +260,20 @@ Answer:"""
             }
     
     def chat(self, question: str) -> Dict[str, Any]:
-        """Optimized chat function for 5-8 second response times with GitHub deployment"""
+        """Main chat function"""
         start_time = time.time()
         
         print(f"\n[CHAT] Question: {question}")
         
-        # Search for relevant documents (optimized)
+        # Search for relevant documents
         search_start = time.time()
-        documents = self.search_documents_optimized(question, n_results=6)
+        documents = self.search_documents(question, n_results=10)
         search_time = time.time() - search_start
         print(f"[TIMING] Document search: {search_time:.2f}s")
         
-        # Generate answer (optimized)
+        # Generate answer
         generation_start = time.time()
-        result = self.generate_answer_optimized(question, documents)
+        result = self.generate_answer(question, documents)
         generation_time = time.time() - generation_start
         print(f"[TIMING] Answer generation: {generation_time:.2f}s")
         
@@ -351,7 +291,7 @@ Answer:"""
 
 
 # Initialize chatbot (will be cached across invocations)
-print("\n[STARTUP] Initializing chatbot instance for GitHub deployment...")
+print("\n[STARTUP] Initializing chatbot instance...")
 chatbot = None
 
 try:
@@ -363,12 +303,13 @@ except Exception as e:
 
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     """
-    RunPod serverless handler function - Optimized for GitHub deployment
+    RunPod serverless handler function
     
     Expected input:
     {
         "input": {
-            "question": "What programs does Northeastern offer?"
+            "question": "What programs does Northeastern offer?",
+            "n_results": 10  # optional
         }
     }
     
@@ -384,7 +325,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         print("\n" + "=" * 80)
-        print("🎯 NEW REQUEST - GitHub Deployment")
+        print("🎯 NEW REQUEST")
         print("=" * 80)
         
         # Extract input
@@ -423,7 +364,8 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
 # RunPod serverless entry point
 if __name__ == "__main__":
     print("\n" + "=" * 80)
-    print("🚀 Starting RunPod GitHub Deployment Handler")
+    print("🚀 Starting RunPod Serverless Handler")
     print("=" * 80)
     
     runpod.serverless.start({'handler': handler})
+

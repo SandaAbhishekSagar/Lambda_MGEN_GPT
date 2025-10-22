@@ -1,44 +1,41 @@
-# Koyeb GPU Optimized Dockerfile
-# Northeastern University Chatbot - A100 GPU Optimized for Koyeb
-FROM python:3.11-slim
+# Dockerfile for Railway Deployment - OpenAI Version
+# Optimized for production with minimal dependencies
 
-# Set working directory
+FROM python:3.9-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Set work directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (minimal)
 RUN apt-get update && apt-get install -y \
     curl \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Upgrade pip
-RUN pip install --upgrade pip
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements_gpu.txt .
+COPY requirements.txt .
 
-# Install Python dependencies with GPU support
-RUN pip install --no-cache-dir -r requirements_gpu.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY koyeb_gpu_handler.py .
-COPY koyeb_gpu_start.py .
-COPY chroma_cloud_config.py .
+# Copy application code
+COPY . .
 
-# Set environment variables for GPU optimization
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
-ENV CUDA_VISIBLE_DEVICES=0
-ENV TOKENIZERS_PARALLELISM=false
-ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+# Make startup script executable
+RUN chmod +x start.sh
 
-# Expose port (Koyeb will set PORT environment variable)
+# Expose port (Railway will set PORT env variable)
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health/enhanced || exit 1
 
-# Start the application
-CMD ["python", "koyeb_gpu_start.py"]
+# Start command - use Railway's PORT environment variable
+CMD uvicorn services.chat_service.enhanced_openai_api:app --host 0.0.0.0 --port ${PORT:-8000}

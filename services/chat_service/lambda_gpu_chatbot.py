@@ -1,662 +1,614 @@
+"""
+Lambda Labs GPU-Optimized Northeastern University Chatbot
+Ultra-fast RAG chatbot with GPU acceleration for sub-8-second response times
+"""
+
 import os
+import sys
 import time
+import torch
+import numpy as np
 import hashlib
 import pickle
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer
-from langchain_openai import ChatOpenAI
+from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass
+import logging
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.prompts import PromptTemplate
-from langchain.schema import Document
 import chromadb
 from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
-from services.shared.chroma_service import ChromaService
-from services.shared.config import config
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+@dataclass
+class ChatResponse:
+    """Structured response from the chatbot"""
+    answer: str
+    sources: List[Dict[str, Any]]
+    confidence: str
+    timing: Dict[str, float]
+    gpu_info: Dict[str, Any]
 
 class LambdaGPUEmbeddingManager:
-    """GPU-optimized embedding manager for Lambda Labs deployment"""
+    """Ultra-optimized GPU embedding manager for Lambda Labs"""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "auto"):
-        print("[LAMBDA GPU] Initializing Lambda GPU Embedding Manager...")
-        start_time = time.time()
+    def __init__(self, cache_file: str = "lambda_gpu_embeddings_cache.pkl"):
+        self.cache_file = cache_file
+        self.embeddings_cache = {}
+        self.document_embeddings = {}
+        self.model = None
+        self.device = self._get_optimal_device()
+        self.batch_size = 32  # Optimized for GPU memory
+        self.load_cache()
         
-        # Auto-detect GPU availability
-        if device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
-            
-        print(f"[LAMBDA GPU] Using device: {self.device}")
-        
-        # GPU-specific optimizations
-        if self.device == "cuda":
-            print(f"[LAMBDA GPU] CUDA available: {torch.cuda.get_device_name(0)}")
-            print(f"[LAMBDA GPU] CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-            
-            # Optimize for GPU memory
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-        
-        # Initialize embedding model with GPU optimization
-        self.model_name = model_name
-        self.model = self._load_embedding_model()
-        
-        # Cache setup
-        self.cache_dir = Path("lambda_embeddings_cache")
-        self.cache_dir.mkdir(exist_ok=True)
-        self.embedding_cache = self._load_cache()
-        
-        init_time = time.time() - start_time
-        print(f"[LAMBDA GPU] Embedding manager initialized in {init_time:.2f} seconds")
-        print(f"[LAMBDA GPU] Model: {self.model_name}")
-        print(f"[LAMBDA GPU] Device: {self.device}")
-        print(f"[LAMBDA GPU] Cache size: {len(self.embedding_cache)} embeddings")
+        logger.info(f"[LAMBDA GPU] Initialized on device: {self.device}")
     
-    def _load_embedding_model(self):
-        """Load embedding model with GPU optimizations"""
-        try:
-            print(f"[LAMBDA GPU] Loading embedding model: {self.model_name}")
+    def _get_optimal_device(self) -> str:
+        """Get optimal device for Lambda Labs GPU"""
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            logger.info(f"[LAMBDA GPU] GPU: {gpu_name}, Memory: {gpu_memory:.1f}GB")
             
-            # Load model with GPU optimizations
-            model = SentenceTransformer(self.model_name, device=self.device)
-            
-            # GPU-specific optimizations
-            if self.device == "cuda":
-                model = model.half()  # Use FP16 for memory efficiency
-                print(f"[LAMBDA GPU] Model converted to FP16 for GPU efficiency")
-            
-            print(f"[LAMBDA GPU] Embedding model loaded successfully")
-            return model
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Error loading embedding model: {e}")
-            raise
-    
-    def _load_cache(self):
-        """Load embedding cache with GPU optimizations"""
-        cache_file = self.cache_dir / f"lambda_gpu_embeddings_cache.pkl"
-        
-        if cache_file.exists():
-            try:
-                with open(cache_file, 'rb') as f:
-                    cache = pickle.load(f)
-                print(f"[LAMBDA GPU] Loaded {len(cache)} embeddings from cache")
-                return cache
-            except Exception as e:
-                print(f"[LAMBDA GPU] Error loading cache: {e}")
-                return {}
-        else:
-            print(f"[LAMBDA GPU] No cache found, starting fresh")
-            return {}
-    
-    def _save_cache(self):
-        """Save embedding cache"""
-        cache_file = self.cache_dir / f"lambda_gpu_embeddings_cache.pkl"
-        try:
-            with open(cache_file, 'wb') as f:
-                pickle.dump(self.embedding_cache, f)
-            print(f"[LAMBDA GPU] Saved {len(self.embedding_cache)} embeddings to cache")
-        except Exception as e:
-            print(f"[LAMBDA GPU] Error saving cache: {e}")
-    
-    def get_query_embedding(self, query: str) -> List[float]:
-        """Get embedding for query with GPU acceleration"""
-        try:
-            # Check cache first
-            query_hash = hashlib.md5(query.encode()).hexdigest()
-            if query_hash in self.embedding_cache:
-                return self.embedding_cache[query_hash]
-            
-            # Generate embedding with GPU
-            if self.device == "cuda":
-                with torch.cuda.amp.autocast():  # Use mixed precision
-                    embedding = self.model.encode([query], convert_to_tensor=True)
-                    embedding = embedding.cpu().numpy()[0].tolist()
+            # Optimize for Lambda Labs GPUs
+            if "A100" in gpu_name or "H100" in gpu_name:
+                self.batch_size = 64
+            elif "4090" in gpu_name or "3090" in gpu_name:
+                self.batch_size = 48
+            elif "3080" in gpu_name:
+                self.batch_size = 32
             else:
-                embedding = self.model.encode([query])[0].tolist()
-            
-            # Cache result
-            self.embedding_cache[query_hash] = embedding
-            
-            return embedding
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Error getting query embedding: {e}")
-            raise
+                self.batch_size = 24
+                
+            return "cuda"
+        else:
+            logger.warning("[LAMBDA GPU] No GPU available, using CPU")
+            self.batch_size = 16
+            return "cpu"
     
-    def get_document_embeddings(self, documents: List[str]) -> List[List[float]]:
-        """Get embeddings for multiple documents with GPU batching"""
+    def load_cache(self):
+        """Load embeddings cache with error handling"""
         try:
-            embeddings = []
-            uncached_docs = []
-            uncached_indices = []
-            
-            # Check cache for each document
-            for i, doc in enumerate(documents):
-                doc_hash = hashlib.md5(doc.encode()).hexdigest()
-                if doc_hash in self.embedding_cache:
-                    embeddings.append(self.embedding_cache[doc_hash])
-                else:
-                    embeddings.append(None)
-                    uncached_docs.append(doc)
-                    uncached_indices.append(i)
-            
-            # Generate embeddings for uncached documents
-            if uncached_docs:
-                print(f"[LAMBDA GPU] Generating {len(uncached_docs)} new embeddings on GPU")
-                
-                if self.device == "cuda":
-                    # Batch process with mixed precision
-                    with torch.cuda.amp.autocast():
-                        batch_embeddings = self.model.encode(
-                            uncached_docs, 
-                            convert_to_tensor=True,
-                            batch_size=32,  # Optimize batch size for GPU
-                            show_progress_bar=True
-                        )
-                        batch_embeddings = batch_embeddings.cpu().numpy()
-                else:
-                    batch_embeddings = self.model.encode(
-                        uncached_docs,
-                        batch_size=16,
-                        show_progress_bar=True
-                    )
-                
-                # Update embeddings list and cache
-                for i, embedding in enumerate(batch_embeddings):
-                    doc_index = uncached_indices[i]
-                    doc_hash = hashlib.md5(documents[doc_index].encode()).hexdigest()
-                    
-                    embedding_list = embedding.tolist()
-                    embeddings[doc_index] = embedding_list
-                    self.embedding_cache[doc_hash] = embedding_list
-            
-            # Save cache periodically
-            if len(uncached_docs) > 0:
-                self._save_cache()
-            
-            return embeddings
-            
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'rb') as f:
+                    cache_data = pickle.load(f)
+                    self.embeddings_cache = cache_data.get('query_cache', {})
+                    self.document_embeddings = cache_data.get('document_embeddings', {})
+                logger.info(f"[LAMBDA GPU] Loaded cache: {len(self.embeddings_cache)} queries, {len(self.document_embeddings)} documents")
         except Exception as e:
-            print(f"[LAMBDA GPU] Error getting document embeddings: {e}")
-            raise
+            logger.error(f"[LAMBDA GPU] Error loading cache: {e}")
+            self.embeddings_cache = {}
+            self.document_embeddings = {}
+    
+    def save_cache(self):
+        """Save embeddings cache with error handling"""
+        try:
+            cache_data = {
+                'query_cache': self.embeddings_cache,
+                'document_embeddings': self.document_embeddings
+            }
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+            logger.info(f"[LAMBDA GPU] Saved cache: {len(self.embeddings_cache)} queries, {len(self.document_embeddings)} documents")
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error saving cache: {e}")
+    
+    def get_embedding_model(self):
+        """Get or create GPU-optimized embedding model"""
+        if self.model is None:
+            logger.info(f"[LAMBDA GPU] Loading embedding model on {self.device}...")
+            
+            # Use faster, smaller model for Lambda Labs
+            model_name = "all-MiniLM-L6-v2"  # Fast and efficient
+            
+            self.model = SentenceTransformer(model_name, device=self.device)
+            
+            # Optimize for GPU
+            if self.device == "cuda":
+                self.model = self.model.half()  # Use FP16 for memory efficiency
+                torch.cuda.empty_cache()
+            
+            logger.info(f"[LAMBDA GPU] Model loaded on {self.device}")
+        return self.model
     
     def get_document_hash(self, content: str) -> str:
-        """Get hash for document content"""
+        """Generate hash for document content"""
         return hashlib.md5(content.encode()).hexdigest()
     
-    def cosine_similarity(self, vec1, vec2):
-        """Calculate cosine similarity"""
-        try:
-            vec1 = np.array(vec1)
-            vec2 = np.array(vec2)
-            return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        except Exception as e:
-            print(f"[LAMBDA GPU] Error calculating cosine similarity: {e}")
-            return 0.0
+    def get_query_embedding(self, content: str) -> np.ndarray:
+        """Get embedding for query content with GPU acceleration"""
+        doc_hash = self.get_document_hash(content)
+        
+        if doc_hash in self.embeddings_cache:
+            return self.embeddings_cache[doc_hash]
+        
+        model = self.get_embedding_model()
+        
+        # GPU-optimized embedding generation
+        with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
+            embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
+            if self.device == "cuda":
+                embedding = embedding.cpu().numpy()[0]
+            else:
+                embedding = embedding.numpy()[0]
+        
+        self.embeddings_cache[doc_hash] = embedding
+        return embedding
+    
+    def get_document_embedding(self, doc_id: str, content: str) -> np.ndarray:
+        """Get embedding for document content with GPU acceleration"""
+        if doc_id in self.document_embeddings:
+            return self.document_embeddings[doc_id]
+        
+        model = self.get_embedding_model()
+        
+        # GPU-optimized embedding generation
+        with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
+            embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
+            if self.device == "cuda":
+                embedding = embedding.cpu().numpy()[0]
+            else:
+                embedding = embedding.numpy()[0]
+        
+        self.document_embeddings[doc_id] = embedding
+        return embedding
+    
+    def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """Calculate cosine similarity between two vectors"""
+        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+    
+    def batch_embed_documents(self, documents: List[Tuple[str, str]]) -> Dict[str, np.ndarray]:
+        """Batch embed documents for efficiency"""
+        model = self.get_embedding_model()
+        embeddings = {}
+        
+        # Process in batches for GPU efficiency
+        for i in range(0, len(documents), self.batch_size):
+            batch = documents[i:i + self.batch_size]
+            doc_ids, contents = zip(*batch)
+            
+            with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
+                batch_embeddings = model.encode(
+                    contents, 
+                    convert_to_tensor=True, 
+                    show_progress_bar=False,
+                    batch_size=self.batch_size
+                )
+                
+                if self.device == "cuda":
+                    batch_embeddings = batch_embeddings.cpu().numpy()
+                else:
+                    batch_embeddings = batch_embeddings.numpy()
+            
+            for j, doc_id in enumerate(doc_ids):
+                embeddings[doc_id] = batch_embeddings[j]
+        
+        return embeddings
 
+class LambdaGPUChromaService:
+    """GPU-optimized ChromaDB service for Lambda Labs"""
+    
+    def __init__(self):
+        self.client = None
+        self.collections_cache = []
+        self.last_cache_update = 0
+        self.cache_ttl = 300  # 5 minutes
+        
+    def get_client(self):
+        """Get or create ChromaDB client"""
+        if self.client is None:
+            chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
+            chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
+            chroma_api_key = os.getenv('CHROMADB_API_KEY')
+            
+            if chroma_api_key:
+                self.client = chromadb.HttpClient(
+                    host=chroma_host,
+                    port=chroma_port,
+                    settings=Settings(
+                        chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
+                        chroma_client_auth_credentials=chroma_api_key
+                    )
+                )
+            else:
+                self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
+            
+            logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
+        
+        return self.client
+    
+    def get_batch_collections(self, force_refresh: bool = False) -> List[str]:
+        """Get batch collections with caching"""
+        current_time = time.time()
+        
+        if not force_refresh and self.collections_cache and (current_time - self.last_cache_update) < self.cache_ttl:
+            return self.collections_cache
+        
+        try:
+            client = self.get_client()
+            all_collections = []
+            offset = 0
+            limit = 1000
+            
+            # Get all collections with pagination
+            while True:
+                try:
+                    collections_batch = client.list_collections(limit=limit, offset=offset)
+                    if not collections_batch or len(collections_batch) == 0:
+                        break
+                    all_collections.extend(collections_batch)
+                    if len(collections_batch) < limit:
+                        break
+                    offset += limit
+                except Exception as e:
+                    logger.warning(f"[LAMBDA GPU] Error fetching collections batch: {e}")
+                    break
+            
+            # Filter for batch collections
+            batch_collections = [
+                col.name for col in all_collections
+                if 'batch' in col.name.lower() or 'ultra_optimized' in col.name.lower()
+            ]
+            
+            self.collections_cache = batch_collections
+            self.last_cache_update = current_time
+            
+            logger.info(f"[LAMBDA GPU] Found {len(batch_collections)} batch collections")
+            return batch_collections
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error getting collections: {e}")
+            return []
+    
+    def search_documents_parallel(self, query_embedding: np.ndarray, n_results: int = 10) -> List[Dict[str, Any]]:
+        """Parallel search across collections for maximum speed"""
+        try:
+            collections = self.get_batch_collections()
+            if not collections:
+                return []
+            
+            # Limit collections for performance (optimized for Lambda Labs)
+            max_collections = 150  # Increased from 100 for better coverage
+            collections_to_search = collections[:max_collections]
+            
+            logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel")
+            
+            all_documents = []
+            
+            # Use ThreadPoolExecutor for parallel search
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = []
+                
+                for collection_name in collections_to_search:
+                    future = executor.submit(self._search_single_collection, collection_name, query_embedding, n_results * 2)
+                    futures.append(future)
+                
+                # Collect results
+                for future in futures:
+                    try:
+                        results = future.result(timeout=5)  # 5 second timeout per collection
+                        if results:
+                            all_documents.extend(results)
+                    except Exception as e:
+                        logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
+                        continue
+            
+            logger.info(f"[LAMBDA GPU] Found {len(all_documents)} total documents")
+            
+            # Deduplicate by document ID
+            seen_ids = {}
+            for doc in all_documents:
+                doc_id = doc['id']
+                if doc_id not in seen_ids or doc['distance'] < seen_ids[doc_id]['distance']:
+                    seen_ids[doc_id] = doc
+            
+            unique_documents = list(seen_ids.values())
+            logger.info(f"[LAMBDA GPU] {len(unique_documents)} unique documents after deduplication")
+            
+            # Sort by similarity and return top N
+            unique_documents.sort(key=lambda x: x['distance'])
+            return unique_documents[:n_results]
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error in parallel search: {e}")
+            return []
+    
+    def _search_single_collection(self, collection_name: str, query_embedding: np.ndarray, n_results: int) -> List[Dict[str, Any]]:
+        """Search a single collection"""
+        try:
+            client = self.get_client()
+            collection = client.get_collection(collection_name)
+            
+            results = collection.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=n_results
+            )
+            
+            documents = []
+            if results and results.get('documents') and results['documents'][0]:
+                for i, doc in enumerate(results['documents'][0]):
+                    metadata = results['metadatas'][0][i] if results.get('metadatas') else {}
+                    distance = results['distances'][0][i] if results.get('distances') else 1.0
+                    doc_id = results['ids'][0][i] if results.get('ids') else str(i)
+                    
+                    documents.append({
+                        'id': doc_id,
+                        'content': doc,
+                        'metadata': metadata,
+                        'distance': distance,
+                        'similarity': 1 - distance
+                    })
+            
+            return documents
+            
+        except Exception as e:
+            logger.warning(f"[LAMBDA GPU] Error searching collection {collection_name}: {e}")
+            return []
 
 class LambdaGPUUniversityRAGChatbot:
-    """Lambda GPU-optimized RAG Chatbot for maximum performance"""
+    """Ultra-optimized GPU RAG Chatbot for Lambda Labs"""
     
-    def __init__(self, model_name: str = "gpt-4o-mini", openai_api_key: Optional[str] = None):
-        print("[LAMBDA GPU] Initializing Lambda GPU RAG Chatbot...")
-        start_time = time.time()
+    def __init__(self):
+        """Initialize the GPU-optimized chatbot"""
+        logger.info("[LAMBDA GPU] Initializing Northeastern Chatbot...")
         
-        # Initialize ChromaDB service
-        self.chroma_service = ChromaService()
-        
-        # Initialize GPU-optimized embedding manager
+        # Initialize components
         self.embedding_manager = LambdaGPUEmbeddingManager()
+        self.chroma_service = LambdaGPUChromaService()
         
-        # Get API key from parameter or config
-        api_key = openai_api_key or config.OPENAI_API_KEY
-        if not api_key:
-            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY in config or pass as parameter.")
+        # Initialize OpenAI components
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
         
-        # Initialize OpenAI LLM with GPU-optimized settings
-        print(f"[LAMBDA GPU] Loading OpenAI {model_name}...")
-        
-        # Handle o4-mini model restrictions (requires temperature=1)
-        if "o4-mini" in model_name.lower() or "o1" in model_name.lower():
-            print(f"[LAMBDA GPU] Using o4-mini/o1 model - temperature fixed at 1.0")
-            self.llm = ChatOpenAI(
-                model=model_name,
-                temperature=1.0,          # Required for o4-mini models
-                max_tokens=3000,          # Increased for detailed responses
-                openai_api_key=api_key,
-                request_timeout=60,       # Longer timeout for reasoning models
-                max_retries=3
-            )
-        else:
-            # Standard models with optimized settings
-            self.llm = ChatOpenAI(
-                model=model_name,
-                temperature=0.3,          # Balanced for detailed but accurate responses
-                max_tokens=3000,          # Increased for detailed responses
-                openai_api_key=api_key,
-                request_timeout=45,
-                max_retries=3
-            )
-        
-        self.model_name = model_name
-        
-        # Enhanced prompt templates optimized for GPU deployment
-        self.query_expansion_prompt = PromptTemplate(
-            input_variables=["question", "conversation_history"],
-            template="""Generate 3 different ways to ask the same specific question to improve search results. Focus on the exact topic being asked.
-
-Question: {question}
-Conversation History: {conversation_history}
-
-Generate 3 alternative questions that ask about the SAME specific topic (one per line):
-1. """
+        # Initialize OpenAI LLM with optimized settings
+        self.llm = ChatOpenAI(
+            model="gpt-4o-mini",  # Fast and efficient
+            temperature=0.3,
+            max_tokens=2500,
+            openai_api_key=self.openai_api_key,
+            request_timeout=20,  # Reduced timeout for faster responses
+            streaming=False
         )
         
-        self.answer_prompt = PromptTemplate(
-            input_variables=["context", "question", "conversation_history"],
-            template="""You are an expert Northeastern University assistant running on Lambda GPU infrastructure. Provide a DETAILED, COMPREHENSIVE, and WELL-STRUCTURED answer to the student's question using the provided context.
+        # Initialize OpenAI embeddings for fallback
+        self.openai_embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=self.openai_api_key
+        )
+        
+        logger.info("[LAMBDA GPU] Chatbot initialized successfully")
+    
+    def get_gpu_info(self) -> Dict[str, Any]:
+        """Get GPU information for monitoring"""
+        gpu_info = {
+            'cuda_available': torch.cuda.is_available(),
+            'device': self.embedding_manager.device,
+            'batch_size': self.embedding_manager.batch_size
+        }
+        
+        if torch.cuda.is_available():
+            gpu_info.update({
+                'gpu_name': torch.cuda.get_device_name(0),
+                'gpu_memory_total': torch.cuda.get_device_properties(0).total_memory / 1024**3,
+                'gpu_memory_allocated': torch.cuda.memory_allocated(0) / 1024**3,
+                'gpu_memory_cached': torch.cuda.memory_reserved(0) / 1024**3,
+                'cuda_version': torch.version.cuda
+            })
+        
+        return gpu_info
+    
+    def search_documents(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
+        """Ultra-fast document search with GPU acceleration"""
+        try:
+            start_time = time.time()
+            
+            # Generate query embedding with GPU acceleration
+            query_embedding = self.embedding_manager.get_query_embedding(query)
+            embedding_time = time.time() - start_time
+            
+            # Parallel search across collections
+            search_start = time.time()
+            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results)
+            search_time = time.time() - search_start
+            
+            total_time = time.time() - start_time
+            
+            logger.info(f"[LAMBDA GPU] Search completed in {total_time:.2f}s (embedding: {embedding_time:.2f}s, search: {search_time:.2f}s)")
+            
+            return documents
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error in document search: {e}")
+            return []
+    
+    def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate answer using optimized LLM"""
+        try:
+            if not context_docs:
+                return {
+                    'answer': "I don't have enough information to answer this question about Northeastern University.",
+                    'sources': [],
+                    'confidence': 'low'
+                }
+            
+            # Build optimized context
+            context_parts = []
+            for i, doc in enumerate(context_docs[:5], 1):
+                content = doc.get('content', '')
+                metadata = doc.get('metadata', {})
+                source = metadata.get('source', 'Unknown')
+                
+                # Truncate content for efficiency
+                if len(content) > 1000:
+                    content = content[:1000] + "..."
+                
+                context_parts.append(f"[Source {i}] {source}\n{content}\n")
+            
+            context = "\n".join(context_parts)
+            
+            # Optimized prompt for faster generation
+            prompt_template = """You are a helpful assistant for Northeastern University. Answer the question based on the provided context.
 
-CRITICAL INSTRUCTIONS:
-- Answer ONLY the specific question asked
-- Use EXACT information from the provided context
-- Provide DETAILED and COMPREHENSIVE answers - don't be brief
-- Structure your response clearly with:
-  * An overview/introduction
-  * Main points organized with bullet points or numbered lists when appropriate
-  * Specific details, numbers, dates, requirements, or procedures
-  * Additional relevant information that helps fully answer the question
-- Quote specific details from the context (costs, dates, requirements, procedures, etc.)
-- If the context contains multiple relevant pieces of information, include ALL of them
-- Use clear formatting: paragraphs, bullet points, or numbered lists for readability
-- Be thorough but stay focused on the specific question
-- If the context doesn't contain specific information, provide helpful general guidance about Northeastern University
-- Do NOT provide generic information not found in the context
-- Be conversational, helpful, and professional
-
-Previous conversation:
-{conversation_history}
-
-Relevant context from university documents:
+Context from Northeastern University documents:
 {context}
 
 Question: {question}
 
-Provide a detailed, well-structured answer:"""
-        )
-        
-        # Initialize utility methods for enhanced processing
-        self.generic_phrases = [
-            'northeastern university offers a variety',
-            'northeastern university provides',
-            'as an expert assistant',
-            'based on the context',
-            'i can provide you with information',
-            'northeastern university is',
-            'the university offers',
-            'northeastern provides'
-        ]
-        
-        init_time = time.time() - start_time
-        print(f"[LAMBDA GPU] Initialization completed in {init_time:.2f} seconds")
-        print(f"[LAMBDA GPU] Model: {self.model_name}")
-        print(f"[LAMBDA GPU] Embedding Device: {self.embedding_manager.device}")
-        print(f"[LAMBDA GPU] Documents to analyze: 10")
-    
-    def expand_query(self, query: str, conversation_history: Optional[List[Dict]] = None) -> List[str]:
-        """Expand query for better search results with GPU optimization"""
-        try:
-            if not conversation_history:
-                conversation_history = []
+Instructions:
+- Provide a detailed, comprehensive answer about Northeastern University
+- Use information from the context provided above
+- Structure your response clearly with bullet points or paragraphs
+- Include specific details like numbers, dates, requirements, or procedures when available
+- If the context contains relevant information, provide a thorough answer
+- Be helpful and informative about Northeastern's programs, policies, and offerings
+
+Answer:"""
             
-            history_text = "\n".join([f"Q: {conv['question']}\nA: {conv['answer']}" 
-                                    for conv in conversation_history[-3:]])
-            
-            prompt = self.query_expansion_prompt.format(
-                question=query,
-                conversation_history=history_text
+            prompt = PromptTemplate(
+                template=prompt_template,
+                input_variables=["context", "question"]
             )
             
-            # Use GPU-optimized LLM call
-            response = self.llm.invoke(prompt)
-            expanded_text = response.content if hasattr(response, 'content') else str(response)
-            
-            # Parse expanded queries
-            queries = [query]  # Always include original
-            for line in expanded_text.split('\n'):
-                line = line.strip()
-                if line and (line.startswith(('1.', '2.', '3.')) or 
-                           (line and not line.startswith('Generate'))):
-                    # Clean up the query
-                    clean_query = line.lstrip('123456789. ').strip()
-                    if clean_query and len(clean_query) > 10:
-                        queries.append(clean_query)
-            
-            # Limit to 4 queries total (original + 3 expanded)
-            queries = queries[:4]
-            print(f"[LAMBDA GPU] Generated {len(queries)-1} query variations")
-            return queries
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Query expansion error: {e}")
-            return [query]
-    
-    def validate_and_improve_answer(self, question: str, answer: str, context: str) -> str:
-        """Validate answer and regenerate if needed"""
-        
-        answer_lower = answer.lower()
-        
-        # Check for generic indicators
-        is_generic = any(phrase in answer_lower for phrase in self.generic_phrases)
-        
-        # Check if answer directly addresses the question
-        question_terms = self.extract_key_terms(question)
-        answer_contains_question_terms = any(term in answer_lower for term in question_terms)
-        
-        # If answer is generic or off-topic, regenerate
-        if is_generic or not answer_contains_question_terms:
-            print(f"[LAMBDA GPU] Regenerating answer - detected generic response")
-            specific_prompt = f"""Answer this specific question: "{question}"
-Use information from this context: {context}
-
-CRITICAL INSTRUCTIONS:
-- Provide a DETAILED, COMPREHENSIVE answer about Northeastern University programs
-- Use information from the provided context, but also draw reasonable conclusions
-- Structure your response clearly with bullet points or organized paragraphs
-- Include ALL relevant details: specific numbers, dates, requirements, procedures
-- Be thorough and well-organized, not brief
-- If you find relevant information about programs, degrees, or academic offerings, include it
-- Focus on being helpful and informative about Northeastern's academic programs
-- Use the context as your primary source but provide a complete answer
-
-Provide a detailed, well-structured answer about Northeastern University programs:"""
-            response = self.llm.invoke(specific_prompt)
-            return response.content if hasattr(response, 'content') else str(response)
-        
-        return answer
-    
-    def hybrid_search(self, query: str, k: int = 10, university_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Enhanced hybrid search with GPU acceleration"""
-        try:
-            start_time = time.time()
-            
-            # Get conversation history for context
-            conversation_history = self.get_conversation_history("current_session", limit=3)
-            
-            # Expand query (with timeout protection)
-            try:
-                expanded_queries = self.expand_query(query, conversation_history)
-                print(f"[LAMBDA GPU] Generated {len(expanded_queries)} query variations")
-            except Exception as e:
-                print(f"[LAMBDA GPU] Query expansion failed, using original query: {e}")
-                expanded_queries = [query]
-            
-            # Perform semantic search for each expanded query
-            all_semantic_results = []
-            for expanded_query in expanded_queries:
-                semantic_results = self.semantic_search(expanded_query, k=k, university_id=university_id)
-                all_semantic_results.extend(semantic_results)
-            
-            # Remove duplicates and rerank
-            unique_results = self.remove_duplicates(all_semantic_results)
-            
-            # Rerank based on relevance to original query
-            reranked_results = self.rerank_results(unique_results, query, k=k)
-            
-            search_time = time.time() - start_time
-            print(f"[LAMBDA GPU] Hybrid search completed in {search_time:.2f} seconds")
-            print(f"[LAMBDA GPU] Found {len(reranked_results)} unique documents")
-            
-            return reranked_results
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Hybrid search error: {e}")
-            return self.semantic_search(query, k=k, university_id=university_id)
-    
-    def semantic_search(self, query: str, k: int = 10, university_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """GPU-accelerated semantic search"""
-        try:
-            # Get query embedding with GPU acceleration
-            query_embedding = self.embedding_manager.get_query_embedding(query)
-            
-            # Search ChromaDB
-            results = self.chroma_service.search_documents(
-                query="",  # Empty query since we're using embedding
-                embedding=query_embedding,
-                n_results=k * 2  # Get more results for reranking
-            )
-            
-            # Process results
-            processed_results = []
-            for i, (doc_version, distance) in enumerate(results):
-                # Convert distance to similarity
-                similarity = 1 - (distance / 2)
-                
-                processed_results.append({
-                    'id': doc_version.id,
-                    'content': doc_version.content,
-                    'title': doc_version.title,
-                    'url': doc_version.url,
-                    'similarity': similarity,
-                    'distance': distance
-                })
-            
-            return processed_results
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Semantic search error: {e}")
-            return []
-    
-    def remove_duplicates(self, results: List[Dict]) -> List[Dict]:
-        """Remove duplicate documents based on document ID"""
-        unique_results = []
-        seen_ids = set()
-        
-        for result in results:
-            # Use document ID for deduplication (more reliable than content hashing)
-            doc_id = result.get('id', '')
-            if doc_id and doc_id not in seen_ids:
-                seen_ids.add(doc_id)
-                unique_results.append(result)
-            elif not doc_id:
-                # If no ID, keep it anyway (shouldn't happen but be safe)
-                unique_results.append(result)
-        
-        print(f"[LAMBDA GPU] Deduplicated {len(results)} results to {len(unique_results)} unique documents")
-        return unique_results
-    
-    def question_specific_rerank(self, results: List[Dict], question: str) -> List[Dict]:
-        """Rerank based on how well each document answers the specific question"""
-        
-        question_terms = self.extract_key_terms(question)
-        
-        for result in results:
-            # Calculate how well this document answers the specific question
-            content = result['content'].lower()
-            term_matches = sum(1 for term in question_terms if term in content)
-            question_relevance = term_matches / len(question_terms) if question_terms else 0.0
-            
-            # Combine with similarity score
-            result['final_score'] = (result['similarity'] * 0.6) + (question_relevance * 0.4)
-        
-        # Sort by final score
-        results.sort(key=lambda x: x['final_score'], reverse=True)
-        return results
-    
-    def rerank_results(self, results: List[Dict], original_query: str, k: int = 10) -> List[Dict]:
-        """Rerank results based on relevance to original query"""
-        try:
-            # Use question-specific reranking for better results
-            reranked_results = self.question_specific_rerank(results, original_query)
-            return reranked_results[:k]
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Reranking error: {e}")
-            return results[:k]
-    
-    def extract_key_terms(self, text: str) -> List[str]:
-        """Extract key terms from text"""
-        # Simple key term extraction
-        words = text.lower().split()
-        # Filter out common words and keep meaningful terms
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'about', 'how', 'what', 'when', 'where', 'why', 'who'}
-        key_terms = [word for word in words if word not in stop_words and len(word) > 2]
-        return key_terms
-    
-    def calculate_confidence(self, relevant_docs: List[Dict], question: str, answer: str) -> float:
-        """Calculate confidence score based on multiple factors"""
-        try:
-            if not relevant_docs:
-                return 0.0
-            
-            # Factor 1: Document relevance scores
-            avg_similarity = sum(doc.get('similarity', 0) for doc in relevant_docs) / len(relevant_docs)
-            
-            # Factor 2: Number of relevant documents
-            doc_count_score = min(len(relevant_docs) / 10, 1.0)  # Normalize to 0-1
-            
-            # Factor 3: Answer length (more detailed = higher confidence)
-            answer_length_score = min(len(answer) / 500, 1.0)  # Normalize to 0-1
-            
-            # Factor 4: Question-answer alignment
-            question_terms = self.extract_key_terms(question)
-            answer_lower = answer.lower()
-            term_coverage = sum(1 for term in question_terms if term in answer_lower) / max(len(question_terms), 1)
-            
-            # Combine factors
-            confidence = (avg_similarity * 0.4 + 
-                         doc_count_score * 0.2 + 
-                         answer_length_score * 0.2 + 
-                         term_coverage * 0.2)
-            
-            return min(confidence, 1.0)  # Cap at 1.0
-            
-        except Exception as e:
-            print(f"[LAMBDA GPU] Confidence calculation error: {e}")
-            return 0.5  # Default moderate confidence
-    
-    def generate_lambda_gpu_response(self, question: str, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Generate response using Lambda GPU-optimized pipeline"""
-        try:
-            start_time = time.time()
-            
-            # Step 1: Hybrid search with GPU acceleration
-            search_start = time.time()
-            relevant_docs = self.hybrid_search(question, k=10)
-            search_time = time.time() - search_start
-            
-            # Step 2: Prepare context
-            context_start = time.time()
-            if not relevant_docs:
-                return {
-                    'answer': "I don't have enough specific information about this topic in my knowledge base.",
-                    'sources': [],
-                    'confidence': 0.0,
-                    'response_time': time.time() - start_time,
-                    'search_time': search_time,
-                    'context_time': 0,
-                    'llm_time': 0,
-                    'documents_analyzed': 0,
-                    'model': self.model_name,
-                    'device': self.embedding_manager.device,
-                    'query_expansions': False
-                }
-            
-            # Build context from documents
-            context = "\n\n".join([
-                f"Document {i+1}: {doc['title']}\nURL: {doc['url']}\nContent: {doc['content'][:1000]}..."
-                for i, doc in enumerate(relevant_docs)
-            ])
+            # Generate answer with optimized settings
+            formatted_prompt = prompt.format(context=context, question=question)
+            response = self.llm.invoke(formatted_prompt)
+            answer = response.content
             
             # Prepare sources
             sources = []
-            for doc in relevant_docs:
+            for doc in context_docs[:5]:
+                metadata = doc.get('metadata', {})
                 sources.append({
-                    'title': doc['title'],
-                    'url': doc['url'],
-                    'relevance': f"{doc.get('similarity', 0) * 100:.1f}%"
+                    'source': metadata.get('source', 'Unknown'),
+                    'similarity': round(doc.get('similarity', 0), 2),
+                    'url': metadata.get('url', '')
                 })
             
-            context_time = time.time() - context_start
-            
-            # Step 3: Generate comprehensive answer
-            llm_start = time.time()
-            
-            # Get conversation history for context
-            conversation_history = self.get_conversation_history(session_id or "current_session", limit=3)
-            history_text = "\n".join([f"Q: {conv['question']}\nA: {conv['answer']}" 
-                                    for conv in conversation_history])
-            
-            prompt = self.answer_prompt.format(
-                context=context,
-                question=question,
-                conversation_history=history_text
-            )
-            
-            response = self.llm.invoke(prompt)
-            answer = response.content if hasattr(response, 'content') else str(response)
-            llm_time = time.time() - llm_start
-            
-            # Step 4: Validate and improve answer if needed
-            answer = answer.strip()
-            answer = self.validate_and_improve_answer(question, answer, context)
-            
-            # Step 5: Calculate confidence
-            confidence = self.calculate_confidence(relevant_docs, question, answer)
-            
-            # Step 6: Store conversation
-            if session_id:
-                self.store_conversation(session_id, question, answer, sources)
-            
-            total_time = time.time() - start_time
-            
-            print(f"[LAMBDA GPU] Response generated in {total_time:.2f}s (search: {search_time:.2f}s, context: {context_time:.2f}s, LLM: {llm_time:.2f}s)")
-            print(f"[LAMBDA GPU] Documents analyzed: {len(relevant_docs)}")
-            print(f"[LAMBDA GPU] Confidence: {confidence:.2f}")
+            # Determine confidence
+            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:5]) / min(5, len(context_docs))
+            if avg_similarity > 0.7:
+                confidence = 'high'
+            elif avg_similarity > 0.5:
+                confidence = 'medium'
+            else:
+                confidence = 'low'
             
             return {
-                'answer': answer.strip(),
+                'answer': answer,
                 'sources': sources,
                 'confidence': confidence,
-                'response_time': total_time,
-                'search_time': search_time,
-                'context_time': context_time,
-                'llm_time': llm_time,
-                'documents_analyzed': len(relevant_docs),
-                'model': self.model_name,
-                'device': self.embedding_manager.device,
-                'query_expansions': True
+                'documents_searched': len(context_docs)
             }
             
         except Exception as e:
-            print(f"[LAMBDA GPU] Error generating response: {e}")
+            logger.error(f"[LAMBDA GPU] Error generating answer: {e}")
             return {
-                'answer': f"I'm sorry, I encountered an error while processing your question. Please try again.",
+                'answer': f"I encountered an error generating the answer: {str(e)}",
                 'sources': [],
-                'confidence': 0.0,
-                'response_time': time.time() - start_time,
-                'search_time': 0,
-                'context_time': 0,
-                'llm_time': 0,
-                'documents_analyzed': 0,
-                'model': self.model_name,
-                'device': self.embedding_manager.device,
-                'query_expansions': False,
-                'error': str(e)
+                'confidence': 'low'
             }
     
-    def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
-        """Get conversation history for session"""
-        # Simplified conversation history storage
-        # In production, you'd use Redis or a database
-        return []
+    def chat(self, question: str) -> ChatResponse:
+        """Main chat function with comprehensive timing"""
+        start_time = time.time()
+        
+        logger.info(f"[LAMBDA GPU] Processing question: {question[:100]}...")
+        
+        # Search for relevant documents
+        search_start = time.time()
+        documents = self.search_documents(question, n_results=10)
+        search_time = time.time() - search_start
+        
+        # Generate answer
+        generation_start = time.time()
+        result = self.generate_answer(question, documents)
+        generation_time = time.time() - generation_start
+        
+        total_time = time.time() - start_time
+        
+        logger.info(f"[LAMBDA GPU] Total response time: {total_time:.2f}s (search: {search_time:.2f}s, generation: {generation_time:.2f}s)")
+        
+        # Add timing information
+        timing = {
+            'search': round(search_time, 2),
+            'generation': round(generation_time, 2),
+            'total': round(total_time, 2)
+        }
+        
+        # Get GPU info
+        gpu_info = self.get_gpu_info()
+        
+        return ChatResponse(
+            answer=result['answer'],
+            sources=result['sources'],
+            confidence=result['confidence'],
+            timing=timing,
+            gpu_info=gpu_info
+        )
     
-    def store_conversation(self, session_id: str, question: str, answer: str, sources: List[Dict]):
-        """Store conversation for session"""
-        # Simplified conversation storage
-        # In production, you'd use Redis or a database
-        pass
+    def clear_cache(self):
+        """Clear GPU cache and embeddings cache"""
+        try:
+            # Clear GPU cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Clear embeddings cache
+            self.embedding_manager.embeddings_cache = {}
+            self.embedding_manager.document_embeddings = {}
+            
+            logger.info("[LAMBDA GPU] Cache cleared successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error clearing cache: {e}")
+            return False
+
+# Global chatbot instance for Lambda Labs
+chatbot_instance = None
+
+def get_chatbot() -> LambdaGPUUniversityRAGChatbot:
+    """Get or create chatbot instance"""
+    global chatbot_instance
+    
+    if chatbot_instance is None:
+        logger.info("[LAMBDA GPU] Creating new chatbot instance...")
+        chatbot_instance = LambdaGPUUniversityRAGChatbot()
+    
+    return chatbot_instance
+
+def clear_gpu_cache():
+    """Clear GPU cache for memory management"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        logger.info("[LAMBDA GPU] GPU cache cleared")
+
+if __name__ == "__main__":
+    # Test the chatbot
+    logger.info("[LAMBDA GPU] Testing chatbot...")
+    
+    try:
+        chatbot = get_chatbot()
+        
+        # Test question
+        test_question = "What programs does Northeastern University offer?"
+        response = chatbot.chat(test_question)
+        
+        print(f"\nQuestion: {test_question}")
+        print(f"Answer: {response.answer}")
+        print(f"Confidence: {response.confidence}")
+        print(f"Timing: {response.timing}")
+        print(f"GPU Info: {response.gpu_info}")
+        
+    except Exception as e:
+        logger.error(f"[LAMBDA GPU] Test failed: {e}")
