@@ -1,38 +1,55 @@
 #!/bin/bash
-# Quick Fix for NVML Driver/Library Version Mismatch
-# Run this first to fix the NVIDIA issue before deployment
 
-echo "🔧 Quick NVIDIA Driver Fix for Lambda Labs"
-echo "=========================================="
+# Quick NVIDIA Driver Fix for Lambda Labs
+# Fix driver/library version mismatch
 
-# Stop any processes using GPU
-echo "Stopping processes using GPU..."
-sudo pkill -f python || true
-sudo pkill -f nvidia || true
+echo "🔧 QUICK NVIDIA DRIVER FIX"
+echo "=========================="
+echo ""
+
+# Check current status
+echo "Current NVIDIA status:"
+nvidia-smi 2>&1 || echo "nvidia-smi failed"
+
+echo ""
+echo "Fixing driver/library version mismatch..."
+
+# Stop NVIDIA services
+sudo systemctl stop nvidia-persistenced 2>/dev/null || true
+sudo systemctl stop nvidia-fabricmanager 2>/dev/null || true
+
+# Unload NVIDIA modules
+sudo rmmod nvidia_uvm 2>/dev/null || true
+sudo rmmod nvidia_drm 2>/dev/null || true
+sudo rmmod nvidia_modeset 2>/dev/null || true
+sudo rmmod nvidia 2>/dev/null || true
+
+echo "NVIDIA modules unloaded"
 
 # Update system
-echo "Updating system..."
-sudo apt update
+sudo apt update -y
 
-# Install/update NVIDIA drivers
-echo "Installing compatible NVIDIA drivers..."
-sudo apt install -y nvidia-driver-525 nvidia-utils-525
+# Install latest NVIDIA drivers
+sudo apt install nvidia-driver-535 nvidia-utils-535 -y
 
-# Alternative: Try Lambda Labs specific fix
-echo "Trying Lambda Labs specific NVIDIA fix..."
-if command -v lambda-install-nvidia-drivers &> /dev/null; then
-    sudo lambda-install-nvidia-drivers
-fi
+echo "NVIDIA drivers installed"
 
-# Update initramfs
-echo "Updating initramfs..."
-sudo update-initramfs -u
+# Install CUDA toolkit
+sudo apt install cuda-toolkit-12-1 -y
+
+# Add CUDA to PATH
+echo 'export PATH=/usr/local/cuda-12.1/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+echo "CUDA toolkit installed"
 
 echo ""
-echo "⚠️  IMPORTANT: REBOOT REQUIRED"
-echo "============================="
-echo "Please run: sudo reboot"
-echo "After reboot, test with: nvidia-smi"
+echo "⚠️  REBOOT REQUIRED"
+echo "=================="
+echo "The system needs to reboot to complete the driver installation."
+echo "After reboot, run: ./lambda_deploy.sh"
 echo ""
-echo "If nvidia-smi works after reboot, then run:"
-echo "./lambda_deploy_fixed.sh"
+echo "Rebooting in 10 seconds... (Press Ctrl+C to cancel)"
+sleep 10
+
+sudo reboot

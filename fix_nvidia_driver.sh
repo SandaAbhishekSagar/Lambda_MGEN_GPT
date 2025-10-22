@@ -1,19 +1,22 @@
 #!/bin/bash
-# Fix NVIDIA Driver/Library Version Mismatch on Lambda Labs
-# This script resolves the NVML initialization error
 
-set -e
+# Fix NVIDIA Driver/Library Version Mismatch
+# Lambda Labs GPU - Northeastern University Chatbot
 
-echo "🔧 Fixing NVIDIA Driver/Library Version Mismatch..."
-echo "=================================================="
+set -e  # Exit on any error
+
+echo "🔧 FIXING NVIDIA DRIVER VERSION MISMATCH"
+echo "======================================="
+echo ""
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
+# Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -27,175 +30,184 @@ print_warning() {
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1
 }
 
-# Check if running on Lambda Labs
-check_lambda_environment() {
-    print_status "Checking Lambda Labs environment..."
-    
-    # Check if we're on Ubuntu
-    if [ ! -f /etc/os-release ]; then
-        print_error "Not running on Ubuntu - this script is for Lambda Labs Ubuntu instances"
-        exit 1
-    fi
-    
-    # Check Ubuntu version
-    . /etc/os-release
-    print_status "Running on Ubuntu $VERSION_ID"
-    
-    # Check if NVIDIA GPU is present
-    if ! lspci | grep -i nvidia > /dev/null; then
-        print_error "No NVIDIA GPU detected"
-        exit 1
-    fi
-    
-    print_success "NVIDIA GPU detected"
-}
-
-# Check current NVIDIA driver status
-check_nvidia_status() {
-    print_status "Checking NVIDIA driver status..."
+# Check current driver status
+check_driver_status() {
+    print_status "Checking current NVIDIA driver status..."
     
     # Check if nvidia-smi works
     if nvidia-smi > /dev/null 2>&1; then
         print_success "nvidia-smi is working"
         nvidia-smi --query-gpu=name,driver_version --format=csv,noheader,nounits
-        return 0
     else
         print_warning "nvidia-smi failed - driver issue detected"
-        return 1
+    fi
+    
+    # Check kernel modules
+    if lsmod | grep nvidia > /dev/null; then
+        print_success "NVIDIA kernel modules loaded"
+        lsmod | grep nvidia
+    else
+        print_warning "NVIDIA kernel modules not loaded"
     fi
 }
 
-# Fix driver/library mismatch
-fix_driver_mismatch() {
-    print_status "Fixing NVIDIA driver/library mismatch..."
+# Stop NVIDIA services
+stop_nvidia_services() {
+    print_status "Stopping NVIDIA services..."
     
-    # Stop any running processes that might be using the GPU
-    print_status "Stopping processes using GPU..."
-    sudo pkill -f python || true
-    sudo pkill -f nvidia || true
+    # Stop NVIDIA services
+    sudo systemctl stop nvidia-persistenced 2>/dev/null || true
+    sudo systemctl stop nvidia-fabricmanager 2>/dev/null || true
     
-    # Update package lists
-    print_status "Updating package lists..."
-    sudo apt update
+    # Unload NVIDIA kernel modules
+    sudo rmmod nvidia_uvm 2>/dev/null || true
+    sudo rmmod nvidia_drm 2>/dev/null || true
+    sudo rmmod nvidia_modeset 2>/dev/null || true
+    sudo rmmod nvidia 2>/dev/null || true
     
-    # Install NVIDIA driver management tools
-    print_status "Installing NVIDIA driver management tools..."
-    sudo apt install -y nvidia-driver-545 nvidia-utils-545
-    
-    # Alternative: Install latest NVIDIA driver
-    print_status "Installing latest NVIDIA driver..."
-    sudo apt install -y nvidia-driver-525 nvidia-utils-525
-    
-    # Update initramfs
-    print_status "Updating initramfs..."
-    sudo update-initramfs -u
-    
-    print_warning "Driver installation completed. REBOOT REQUIRED."
-    print_status "Please run: sudo reboot"
-    print_status "After reboot, run this script again to verify the fix"
+    print_success "NVIDIA services stopped and modules unloaded"
 }
 
-# Alternative fix: Reinstall NVIDIA drivers
-reinstall_nvidia_drivers() {
-    print_status "Reinstalling NVIDIA drivers..."
+# Update system packages
+update_system() {
+    print_status "Updating system packages..."
+    
+    sudo apt update -y
+    sudo apt upgrade -y
+    
+    print_success "System packages updated"
+}
+
+# Install/update NVIDIA drivers
+install_nvidia_drivers() {
+    print_status "Installing/updating NVIDIA drivers..."
     
     # Remove existing NVIDIA packages
-    print_status "Removing existing NVIDIA packages..."
-    sudo apt remove --purge -y nvidia-* libnvidia-*
-    sudo apt autoremove -y
+    sudo apt remove --purge nvidia-* libnvidia-* -y 2>/dev/null || true
     
-    # Clean package cache
+    # Clean up
+    sudo apt autoremove -y
     sudo apt autoclean
     
-    # Install fresh NVIDIA drivers
-    print_status "Installing fresh NVIDIA drivers..."
-    sudo apt update
-    sudo apt install -y nvidia-driver-525 nvidia-utils-525
-    
-    # Update initramfs
-    sudo update-initramfs -u
-    
-    print_warning "Fresh driver installation completed. REBOOT REQUIRED."
-}
-
-# Verify fix after reboot
-verify_fix() {
-    print_status "Verifying NVIDIA driver fix..."
-    
-    # Wait a moment for driver to initialize
-    sleep 3
-    
-    # Test nvidia-smi
-    if nvidia-smi > /dev/null 2>&1; then
-        print_success "✅ NVIDIA driver is working correctly!"
-        print_status "GPU Information:"
-        nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits
-        
-        # Test CUDA
-        print_status "Testing CUDA..."
-        if python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" 2>/dev/null; then
-            print_success "✅ CUDA is working correctly!"
-        else
-            print_warning "CUDA test failed - may need PyTorch reinstallation"
-        fi
-        
-        return 0
-    else
-        print_error "❌ NVIDIA driver still not working"
-        return 1
-    fi
-}
-
-# Install CUDA toolkit if needed
-install_cuda_toolkit() {
-    print_status "Installing CUDA toolkit..."
-    
-    # Download and install CUDA toolkit
+    # Add NVIDIA repository
     wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
     sudo dpkg -i cuda-keyring_1.0-1_all.deb
     sudo apt update
-    sudo apt install -y cuda-toolkit-12-1
+    
+    # Install latest NVIDIA drivers
+    sudo apt install nvidia-driver-535 nvidia-utils-535 -y
+    
+    print_success "NVIDIA drivers installed"
+}
+
+# Install CUDA toolkit
+install_cuda_toolkit() {
+    print_status "Installing CUDA toolkit..."
+    
+    # Install CUDA toolkit
+    sudo apt install cuda-toolkit-12-1 -y
     
     # Add CUDA to PATH
-    echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
-    echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+    echo 'export PATH=/usr/local/cuda-12.1/bin:$PATH' >> ~/.bashrc
+    echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
     source ~/.bashrc
     
     print_success "CUDA toolkit installed"
 }
 
-# Main function
-main() {
-    echo "🔧 NVIDIA Driver/Library Mismatch Fix"
-    echo "====================================="
+# Reboot system
+reboot_system() {
+    print_status "Reboot required to complete driver installation..."
+    print_warning "The system will reboot in 10 seconds. Press Ctrl+C to cancel."
     
-    # Check environment
-    check_lambda_environment
+    sleep 10
     
-    # Check if we need to reboot
-    if [ "$1" = "--verify" ]; then
-        verify_fix
-        exit $?
-    fi
-    
-    # Check current status
-    if check_nvidia_status; then
-        print_success "NVIDIA driver is already working correctly!"
-        exit 0
-    fi
-    
-    print_warning "NVIDIA driver/library mismatch detected"
-    print_status "Attempting to fix..."
-    
-    # Try the fix
-    fix_driver_mismatch
-    
-    print_status "Fix applied. Please reboot and run:"
-    print_status "./fix_nvidia_driver.sh --verify"
+    print_status "Rebooting system..."
+    sudo reboot
 }
 
-# Run main function
-main "$@"
+# Test GPU after reboot
+test_gpu_after_reboot() {
+    print_status "Testing GPU after reboot..."
+    
+    # Check nvidia-smi
+    if nvidia-smi > /dev/null 2>&1; then
+        print_success "nvidia-smi is working"
+        nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits
+    else
+        print_error "nvidia-smi still not working"
+        return 1
+    fi
+    
+    # Check CUDA
+    if nvcc --version > /dev/null 2>&1; then
+        print_success "CUDA compiler is working"
+        nvcc --version
+    else
+        print_warning "CUDA compiler not found"
+    fi
+    
+    # Test PyTorch CUDA
+    python3 -c "
+import torch
+print(f'PyTorch version: {torch.__version__}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'CUDA version: {torch.version.cuda}')
+    print(f'GPU name: {torch.cuda.get_device_name(0)}')
+    print(f'GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB')
+"
+    
+    print_success "GPU test completed"
+}
+
+# Main function
+main() {
+    print_status "Starting NVIDIA driver fix process..."
+    echo ""
+    
+    # Step 1: Check current status
+    check_driver_status
+    echo ""
+    
+    # Step 2: Stop NVIDIA services
+    stop_nvidia_services
+    echo ""
+    
+    # Step 3: Update system
+    update_system
+    echo ""
+    
+    # Step 4: Install/update drivers
+    install_nvidia_drivers
+    echo ""
+    
+    # Step 5: Install CUDA toolkit
+    install_cuda_toolkit
+    echo ""
+    
+    # Step 6: Reboot system
+    reboot_system
+}
+
+# Handle command line arguments
+case "${1:-}" in
+    "check")
+        check_driver_status
+        ;;
+    "stop")
+        stop_nvidia_services
+        ;;
+    "install")
+        install_nvidia_drivers
+        ;;
+    "test")
+        test_gpu_after_reboot
+        ;;
+    *)
+        main
+        ;;
+esac
