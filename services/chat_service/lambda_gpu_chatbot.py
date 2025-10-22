@@ -204,86 +204,24 @@ class LambdaGPUChromaService:
         self.cache_ttl = 300  # 5 minutes
         
     def get_client(self):
-        """Get or create ChromaDB client with ChromaDB Cloud support"""
+        """Get or create ChromaDB client"""
         if self.client is None:
-            try:
-                # Check if using ChromaDB Cloud (newtest database)
-                use_cloud = os.getenv('USE_CLOUD_CHROMA', 'true').lower() == 'true'
-                
-                if use_cloud:
-                    # Use ChromaDB Cloud with newtest database
-                    try:
-                        from chromadb import CloudClient
-                    except ImportError:
-                        # Fallback for older versions
-                        from chromadb import Client as CloudClient
-                    
-                    # ChromaDB Cloud configuration for newtest database
-                    chroma_api_key = os.getenv('CHROMADB_API_KEY', 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW')
-                    chroma_tenant = os.getenv('CHROMADB_TENANT', '28757e4a-f042-4b0c-ad7c-9257cd36b130')
-                    chroma_database = os.getenv('CHROMADB_DATABASE', 'newtest')
-                    
-                    # Try different authentication methods for different ChromaDB versions
-                    try:
-                        # Method 1: New ChromaDB 1.2+ CloudClient
-                        self.client = CloudClient(
-                            api_key=chroma_api_key,
-                            tenant=chroma_tenant,
-                            database=chroma_database
-                        )
-                        logger.info(f"[LAMBDA CHROMA] Connected to ChromaDB Cloud database: {chroma_database} (Method 1)")
-                    except Exception as e1:
-                        logger.warning(f"[LAMBDA CHROMA] Method 1 failed: {e1}")
-                        try:
-                            # Method 2: Alternative authentication
-                            self.client = CloudClient(
-                                api_key=chroma_api_key,
-                                tenant=chroma_tenant,
-                                database=chroma_database,
-                                settings=Settings(allow_reset=True)
-                            )
-                            logger.info(f"[LAMBDA CHROMA] Connected to ChromaDB Cloud database: {chroma_database} (Method 2)")
-                        except Exception as e2:
-                            logger.warning(f"[LAMBDA CHROMA] Method 2 failed: {e2}")
-                            # Method 3: Direct HTTP client
-                            self.client = chromadb.HttpClient(
-                                host="api.trychroma.com",
-                                port=8000,
-                                settings=Settings(
-                                    chroma_api_impl="chromadb.api.fastapi.FastAPI",
-                                    chroma_server_host="api.trychroma.com",
-                                    chroma_server_http_port="8000",
-                                    chroma_server_headers={"X-Chroma-Token": chroma_api_key}
-                                )
-                            )
-                            logger.info(f"[LAMBDA CHROMA] Connected to ChromaDB Cloud database: {chroma_database} (Method 3)")
-                else:
-                    # Fallback to local ChromaDB (for development)
-                    chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
-                    chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
-                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
-                    
-                    if chroma_api_key:
-                        self.client = chromadb.HttpClient(
-                            host=chroma_host,
-                            port=chroma_port,
-                            settings=Settings(
-                                chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                                chroma_client_auth_credentials=chroma_api_key
-                            )
-                        )
-                    else:
-                        self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
-                        logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
-                
-                return self.client
-                
-            except Exception as e:
-                logger.error(f"[LAMBDA CHROMA] Failed to connect to ChromaDB: {e}")
-                # Return a mock client for fallback
-                self.client = None
-                return None
-        
+            chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
+            chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
+            chroma_api_key = os.getenv('CHROMADB_API_KEY')
+            
+            if chroma_api_key:
+                self.client = chromadb.HttpClient(
+                    host=chroma_host,
+                    port=chroma_port,
+                    settings=Settings(
+                        chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
+                        chroma_client_auth_credentials=chroma_api_key
+                    )
+                )
+            else:
+                self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
+                logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
         return self.client
     
     def get_batch_collections(self, force_refresh: bool = False) -> List[str]:

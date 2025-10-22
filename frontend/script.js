@@ -7,10 +7,10 @@ class UniversityChatbot {
         if (window.API_BASE_URL && window.API_BASE_URL.trim().length > 0) {
             this.apiBaseUrl = window.API_BASE_URL.trim().replace(/\/$/, '');
         } else {
-            // Default: localhost in dev, same host:8001 in prod
+            // Default: localhost in dev, same host:8000 in prod (Lambda Labs GPU)
             this.apiBaseUrl = window.location.hostname === 'localhost'
-                ? 'http://localhost:8001'
-                : `${window.location.protocol}//${window.location.hostname}:8001`;
+                ? 'http://localhost:8000'
+                : `${window.location.protocol}//${window.location.hostname}:8000`;
         }
         this.sessionId = this.generateSessionId();
         this.messageCount = 0;

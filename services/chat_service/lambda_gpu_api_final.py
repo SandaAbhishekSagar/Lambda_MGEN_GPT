@@ -190,23 +190,6 @@ async def get_document_stats():
         
         logger.info(f"[LAMBDA GPU API] Found {len(collections)} collections to count")
         
-        # Check if ChromaDB client is available
-        if chatbot.chroma_service.client is None:
-            logger.warning("[LAMBDA GPU API] ChromaDB client not available, using fallback document count")
-            # Use fallback estimation based on known data
-            total_documents = 25000  # Known total from previous analysis
-            return {
-                "total_documents": total_documents,
-                "total_collections": len(collections),
-                "total_universities": 1,
-                "collections": collections[:10],
-                "cache_status": {
-                    "query_cache_size": len(chatbot.embeddings_cache),
-                    "document_cache_size": len(chatbot.document_embeddings)
-                },
-                "note": "Using fallback count - ChromaDB client not available"
-            }
-        
         # Count documents in each collection (limit to first 100 for performance)
         for i, collection_name in enumerate(collections[:100]):  # Limit to first 100 collections for performance
             try:
@@ -266,7 +249,7 @@ async def chat(request: ChatRequest):
         return ChatResponseModel(
             answer=response.answer,
             sources=response.sources,
-            confidence=response.confidence,
+            confidence=str(response.confidence),  # Convert to string
             timing=response.timing,
             gpu_info=response.gpu_info
         )
