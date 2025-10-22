@@ -42,26 +42,52 @@ class LambdaGPUChromaService:
         """Get or create ChromaDB client with connection pooling"""
         if self.client is None:
             try:
-                chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
-                chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
-                chroma_api_key = os.getenv('CHROMADB_API_KEY')
+                # Check if using ChromaDB Cloud (newtest database)
+                use_cloud = os.getenv('USE_CLOUD_CHROMA', 'true').lower() == 'true'
                 
-                # Connection settings optimized for Lambda Labs
-                settings = Settings(
-                    chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                    chroma_client_auth_credentials=chroma_api_key
-                ) if chroma_api_key else Settings()
-                
-                self.client = chromadb.HttpClient(
-                    host=chroma_host,
-                    port=chroma_port,
-                    settings=settings
-                )
+                if use_cloud:
+                    # Use ChromaDB Cloud with newtest database
+                    from chromadb import CloudClient
+                    
+                    # ChromaDB Cloud configuration for newtest database
+                    chroma_api_key = os.getenv('CHROMADB_API_KEY', 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW')
+                    chroma_tenant = os.getenv('CHROMADB_TENANT', '28757e4a-f042-4b0c-ad7c-9257cd36b130')
+                    chroma_database = os.getenv('CHROMADB_DATABASE', 'newtest')
+                    
+                    self.client = CloudClient(
+                        api_key=chroma_api_key,
+                        tenant=chroma_tenant,
+                        database=chroma_database
+                    )
+                    
+                    logger.info(f"[LAMBDA CHROMA] Connected to ChromaDB Cloud database: {chroma_database}")
+                else:
+                    # Fallback to local ChromaDB (for development)
+                    chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
+                    chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
+                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
+                    
+                    # Connection settings optimized for Lambda Labs
+                    settings = Settings(
+                        chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
+                        chroma_client_auth_credentials=chroma_api_key
+                    ) if chroma_api_key else Settings()
+                    
+                    self.client = chromadb.HttpClient(
+                        host=chroma_host,
+                        port=chroma_port,
+                        settings=settings
+                    )
+                    
+                    logger.info(f"[LAMBDA CHROMA] Connected to local ChromaDB at {chroma_host}:{chroma_port}")
                 
                 # Test connection
                 self.client.heartbeat()
                 
-                logger.info(f"[LAMBDA CHROMA] Connected to {chroma_host}:{chroma_port}")
+                if use_cloud:
+                    logger.info(f"[LAMBDA CHROMA] ChromaDB Cloud connection established")
+                else:
+                    logger.info(f"[LAMBDA CHROMA] Connected to {chroma_host}:{chroma_port}")
                 
             except Exception as e:
                 logger.error(f"[LAMBDA CHROMA] Connection failed: {e}")
