@@ -185,7 +185,7 @@ async def get_document_stats():
             raise HTTPException(status_code=503, detail="Chatbot not initialized")
         
         # Get collection info and count documents
-        collections = chatbot.chroma_service.get_batch_collections()
+        collections = chatbot.get_batch_collections()
         total_documents = 0
         
         logger.info(f"[LAMBDA GPU API] Found {len(collections)} collections to count")
@@ -298,8 +298,8 @@ async def get_performance_metrics():
                 "document_cache_size": len(chatbot.embedding_manager.document_embeddings)
             },
             "collections": {
-                "total": len(chatbot.chroma_service.get_batch_collections()),
-                "cached": len(chatbot.chroma_service.collections_cache)
+                "total": len(chatbot.get_batch_collections()),
+                "cached": len(chatbot.collections_cache)
             }
         }
         
@@ -365,3 +365,4 @@ if __name__ == "__main__":
         log_level="info",
         access_log=True
     )
+

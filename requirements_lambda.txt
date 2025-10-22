@@ -18,9 +18,12 @@ chromadb==1.0.15
 sentence-transformers==2.2.2
 transformers==4.36.0
 torch>=2.0.0
-torch-audio>=2.0.0
-torch-vision>=2.0.0
+torchaudio>=2.0.0
+torchvision==0.20.1
 numpy<2.0.0
+
+# HuggingFace Hub (compatible version)
+huggingface-hub>=0.16.4,<0.20.0
 
 # GPU Optimization (REQUIRED for Lambda Labs)
 accelerate>=0.24.0

@@ -251,8 +251,8 @@ class UniversityChatbot {
         try {
             console.log('Loading system status...');
             
-            // Check enhanced API health
-            const healthResponse = await fetch(`${this.apiBaseUrl}/health/enhanced`);
+            // Check API health
+            const healthResponse = await fetch(`${this.apiBaseUrl}/health`);
             console.log('Health response status:', healthResponse.status);
             
             if (healthResponse.ok) {
