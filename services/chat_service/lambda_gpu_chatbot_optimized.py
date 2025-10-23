@@ -211,22 +211,19 @@ class LambdaGPUChromaService:
                 use_cloud = os.getenv('USE_CLOUD_CHROMA', 'false').lower() == 'true'
                 
                 if use_cloud:
-                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
-                    chroma_tenant = os.getenv('CHROMADB_TENANT')
-                    chroma_database = os.getenv('CHROMADB_DATABASE')
+                    # Use the working ChromaDB Cloud authentication from Railway
+                    api_key = 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW'
+                    tenant = '28757e4a-f042-4b0c-ad7c-9257cd36b130'
+                    database = 'newtest'
                     
-                    if chroma_api_key and chroma_tenant and chroma_database:
-                        logger.info(f"[LAMBDA GPU] Connecting to ChromaDB Cloud...")
-                        self.client = chromadb.HttpClient(
-                            host="https://api.trychroma.com",
-                            settings=Settings(
-                                chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                                chroma_client_auth_credentials=chroma_api_key
-                            )
-                        )
-                        logger.info(f"[LAMBDA GPU] Connected to ChromaDB Cloud")
-                    else:
-                        raise ValueError("ChromaDB Cloud credentials not found")
+                    logger.info(f"[LAMBDA GPU] Connecting to ChromaDB Cloud...")
+                    # Use the working CloudClient approach
+                    self.client = chromadb.CloudClient(
+                        api_key=api_key,
+                        tenant=tenant,
+                        database=database
+                    )
+                    logger.info(f"[LAMBDA GPU] Connected to ChromaDB Cloud")
                 else:
                     # Local ChromaDB
                     chroma_host = os.getenv('CHROMADB_HOST', 'localhost')

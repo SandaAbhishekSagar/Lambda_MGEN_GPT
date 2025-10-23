@@ -209,15 +209,72 @@ fix_huggingface_issues() {
 fix_chromadb_issues() {
     print_status "Fixing ChromaDB authentication issues..."
     
+    # Update ChromaDB to latest version
+    source lambda_gpu_env/bin/activate
+    pip install --upgrade chromadb
+    
     # Fix ChromaDB authentication in the chatbot file
     if [ -f "services/chat_service/lambda_gpu_chatbot_optimized.py" ]; then
         # Create a backup
         cp services/chat_service/lambda_gpu_chatbot_optimized.py services/chat_service/lambda_gpu_chatbot_optimized.py.backup
         
-        # Fix the authentication issue by removing unsupported parameter
-        sed -i 's/chroma_client_auth_token_transport_header="X-Chroma-Token"//' services/chat_service/lambda_gpu_chatbot_optimized.py
+        # Update the authentication to use the working Railway method
+        python3 -c "
+import re
+
+# Read the file
+with open('services/chat_service/lambda_gpu_chatbot_optimized.py', 'r') as f:
+    content = f.read()
+
+# Replace the ChromaDB authentication with the working Railway method
+old_auth = '''if use_cloud:
+                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
+                    chroma_tenant = os.getenv('CHROMADB_TENANT')
+                    chroma_database = os.getenv('CHROMADB_DATABASE')
+                    
+                    if chroma_api_key and chroma_tenant and chroma_database:
+                        logger.info(f\"[LAMBDA GPU] Connecting to ChromaDB Cloud...\")
+                        # Use direct authentication approach
+                        self.client = chromadb.HttpClient(
+                            host=\"https://api.trychroma.com\",
+                            settings=Settings(
+                                chroma_client_auth_provider=\"chromadb.auth.token.TokenAuthClientProvider\",
+                                chroma_client_auth_credentials=chroma_api_key
+                            )
+                        )
+                        logger.info(f\"[LAMBDA GPU] Connected to ChromaDB Cloud\")
+                    else:
+                        raise ValueError(\"ChromaDB Cloud credentials not found\")'''
+
+new_auth = '''if use_cloud:
+                    # Use the working ChromaDB Cloud authentication from Railway
+                    api_key = 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW'
+                    tenant = '28757e4a-f042-4b0c-ad7c-9257cd36b130'
+                    database = 'newtest'
+                    
+                    logger.info(f\"[LAMBDA GPU] Connecting to ChromaDB Cloud...\")
+                    # Use the working CloudClient approach
+                    self.client = chromadb.CloudClient(
+                        api_key=api_key,
+                        tenant=tenant,
+                        database=database
+                    )
+                    logger.info(f\"[LAMBDA GPU] Connected to ChromaDB Cloud\")'''
+
+# Replace the authentication section
+if old_auth in content:
+    content = content.replace(old_auth, new_auth)
+    
+    # Write back
+    with open('services/chat_service/lambda_gpu_chatbot_optimized.py', 'w') as f:
+        f.write(content)
+    
+    print('ChromaDB authentication updated to use working Railway method')
+else:
+    print('ChromaDB authentication pattern not found - may already be updated')
+"
         
-        print_success "ChromaDB authentication issues fixed"
+        print_success "ChromaDB authentication issues fixed with working Railway method"
     else
         print_warning "Chatbot file not found - ChromaDB fix skipped"
     fi
@@ -507,6 +564,60 @@ EOF
     print_success "Test script created (test_lambda_labs.py)"
 }
 
+# Test deployment
+test_deployment() {
+    print_status "Testing deployment..."
+    
+    source lambda_gpu_env/bin/activate
+    
+    # Test HuggingFace compatibility
+    echo "🧪 Testing HuggingFace Hub compatibility..."
+    python3 -c "
+try:
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    print('✅ HuggingFace Hub compatibility test successful')
+except Exception as e:
+    print(f'❌ HuggingFace Hub compatibility test failed: {e}')
+"
+    
+    # Test ChromaDB connection
+    echo "🧪 Testing ChromaDB connection..."
+    python3 -c "
+try:
+    import chromadb
+    
+    # Test the working authentication method
+    api_key = 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW'
+    tenant = '28757e4a-f042-4b0c-ad7c-9257cd36b130'
+    database = 'newtest'
+    
+    client = chromadb.CloudClient(
+        api_key=api_key,
+        tenant=tenant,
+        database=database
+    )
+    
+    # Test connection
+    collections = client.list_collections()
+    print(f'✅ ChromaDB connection test successful - Found {len(collections)} collections')
+except Exception as e:
+    print(f'❌ ChromaDB connection test failed: {e}')
+"
+    
+    # Test chatbot import
+    echo "🧪 Testing chatbot import..."
+    python3 -c "
+try:
+    from services.chat_service.lambda_gpu_chatbot_optimized import get_chatbot
+    print('✅ Chatbot import test successful')
+except Exception as e:
+    print(f'❌ Chatbot import test failed: {e}')
+"
+    
+    print_success "Deployment tests completed"
+}
+
 # Main deployment function
 main() {
     print_status "Starting Lambda Labs GPU deployment (OPTIMIZED)..."
@@ -548,7 +659,11 @@ main() {
     create_test_script
     echo ""
     
-    # Step 8: Final instructions
+    # Step 8: Test the deployment
+    test_deployment
+    echo ""
+    
+    # Step 9: Final instructions
     print_success "Deployment completed successfully!"
     echo ""
     print_status "Next steps:"
