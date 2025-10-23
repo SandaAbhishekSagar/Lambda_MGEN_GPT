@@ -221,8 +221,7 @@ class LambdaGPUChromaService:
                             host="https://api.trychroma.com",
                             settings=Settings(
                                 chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                                chroma_client_auth_credentials=chroma_api_key,
-                                chroma_client_auth_token_transport_header="X-Chroma-Token"
+                                chroma_client_auth_credentials=chroma_api_key
                             )
                         )
                         logger.info(f"[LAMBDA GPU] Connected to ChromaDB Cloud")

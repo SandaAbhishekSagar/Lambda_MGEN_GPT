@@ -47,6 +47,8 @@ The script will:
 - ✅ Create Python virtual environment
 - ✅ Install PyTorch with CUDA support
 - ✅ Install all required dependencies
+- ✅ Fix HuggingFace Hub compatibility issues
+- ✅ Fix ChromaDB authentication issues
 - ✅ Create configuration files
 - ✅ Set up monitoring scripts
 

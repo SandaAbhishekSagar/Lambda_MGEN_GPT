@@ -188,6 +188,41 @@ install_dependencies() {
     print_success "Dependencies installed"
 }
 
+# Fix HuggingFace Hub compatibility issues
+fix_huggingface_issues() {
+    print_status "Fixing HuggingFace Hub compatibility issues..."
+    
+    source lambda_gpu_env/bin/activate
+    
+    # Uninstall problematic packages
+    pip uninstall -y huggingface-hub transformers sentence-transformers || print_warning "Some packages not found for uninstall"
+    
+    # Install compatible versions
+    pip install huggingface-hub==0.19.4
+    pip install transformers==4.35.2
+    pip install sentence-transformers==2.2.2
+    
+    print_success "HuggingFace Hub compatibility issues fixed"
+}
+
+# Fix ChromaDB authentication issues
+fix_chromadb_issues() {
+    print_status "Fixing ChromaDB authentication issues..."
+    
+    # Fix ChromaDB authentication in the chatbot file
+    if [ -f "services/chat_service/lambda_gpu_chatbot_optimized.py" ]; then
+        # Create a backup
+        cp services/chat_service/lambda_gpu_chatbot_optimized.py services/chat_service/lambda_gpu_chatbot_optimized.py.backup
+        
+        # Fix the authentication issue by removing unsupported parameter
+        sed -i 's/chroma_client_auth_token_transport_header="X-Chroma-Token"//' services/chat_service/lambda_gpu_chatbot_optimized.py
+        
+        print_success "ChromaDB authentication issues fixed"
+    else
+        print_warning "Chatbot file not found - ChromaDB fix skipped"
+    fi
+}
+
 # Create environment file
 create_env_file() {
     print_status "Creating environment configuration..."
@@ -499,14 +534,21 @@ main() {
     install_dependencies
     echo ""
     
-    # Step 6: Create configuration files
+    # Step 6: Fix compatibility issues
+    fix_huggingface_issues
+    echo ""
+    
+    fix_chromadb_issues
+    echo ""
+    
+    # Step 7: Create configuration files
     create_env_file
     create_startup_script
     create_monitoring_script
     create_test_script
     echo ""
     
-    # Step 7: Final instructions
+    # Step 8: Final instructions
     print_success "Deployment completed successfully!"
     echo ""
     print_status "Next steps:"
@@ -528,6 +570,7 @@ main() {
     echo ""
     print_success "Lambda Labs GPU deployment complete! 🚀"
     print_warning "No system restart required - Jupyter should continue working!"
+    print_status "All compatibility issues have been automatically fixed!"
 }
 
 # Run main function
