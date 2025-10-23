@@ -185,14 +185,14 @@ class LambdaGPUEmbeddingManager:
                 )
                 
                 if self.device == "cuda":
-                    batch_embeddings = batch_embeddings.cpu().numpy()
+                        batch_embeddings = batch_embeddings.cpu().numpy()
                 else:
                     batch_embeddings = batch_embeddings.numpy()
             
             for j, doc_id in enumerate(doc_ids):
                 embeddings[doc_id] = batch_embeddings[j]
             
-        return embeddings
+            return embeddings
             
 class LambdaGPUChromaService:
     """GPU-optimized ChromaDB service for Lambda Labs"""
@@ -218,8 +218,8 @@ class LambdaGPUChromaService:
                         chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
                         chroma_client_auth_credentials=chroma_api_key
                     )
-                )
-            else:
+            )
+        else:
                 self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
                 logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
         return self.client
@@ -403,7 +403,7 @@ class LambdaGPUUniversityRAGChatbot:
         return gpu_info
     
     def search_documents(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
-        """Ultra-fast document search with GPU acceleration"""
+        """Ultra-fast document search with GPU acceleration and quality filtering"""
         try:
             start_time = time.time()
             
@@ -413,18 +413,79 @@ class LambdaGPUUniversityRAGChatbot:
             
             # Parallel search across collections
             search_start = time.time()
-            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results)
+            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results * 2)  # Get more for filtering
             search_time = time.time() - search_start
+            
+            # Quality filtering and relevance scoring
+            filtered_docs = self._filter_and_rank_documents(documents, query, n_results)
             
             total_time = time.time() - start_time
             
             logger.info(f"[LAMBDA GPU] Search completed in {total_time:.2f}s (embedding: {embedding_time:.2f}s, search: {search_time:.2f}s)")
+            logger.info(f"[LAMBDA GPU] Found {len(documents)} documents, filtered to {len(filtered_docs)} high-quality results")
             
-            return documents
+            return filtered_docs
             
         except Exception as e:
             logger.error(f"[LAMBDA GPU] Error in document search: {e}")
             return []
+    
+    def _filter_and_rank_documents(self, documents: List[Dict[str, Any]], query: str, n_results: int) -> List[Dict[str, Any]]:
+        """Filter and rank documents by relevance and quality"""
+        try:
+            if not documents:
+                return []
+    
+            # Extract query terms for relevance scoring
+            query_terms = set(query.lower().split())
+            
+            # Score and filter documents
+            scored_docs = []
+            for doc in documents:
+                # Calculate relevance score
+                relevance_score = self._calculate_relevance_score(doc, query_terms)
+                
+                # Only include documents with reasonable relevance
+                if relevance_score > 0.1:  # Minimum relevance threshold
+                    doc['relevance_score'] = relevance_score
+                    scored_docs.append(doc)
+            
+            # Sort by relevance score (higher is better)
+            scored_docs.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+            
+            # Return top N results
+            return scored_docs[:n_results]
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error filtering documents: {e}")
+            return documents[:n_results]  # Fallback to original results
+    
+    def _calculate_relevance_score(self, doc: Dict[str, Any], query_terms: set) -> float:
+        """Calculate relevance score for a document"""
+        try:
+            content = doc.get('content', '').lower()
+            metadata = doc.get('metadata', {})
+            
+            # Base similarity from embedding
+            similarity = doc.get('similarity', 0)
+            
+            # Boost score for title matches
+            title = metadata.get('title', '').lower()
+            title_matches = sum(1 for term in query_terms if term in title)
+            title_boost = title_matches / len(query_terms) if query_terms else 0
+            
+            # Boost score for content matches
+            content_matches = sum(1 for term in query_terms if term in content)
+            content_boost = content_matches / len(query_terms) if query_terms else 0
+            
+            # Combine scores
+            relevance_score = similarity + (title_boost * 0.3) + (content_boost * 0.2)
+            
+            return min(relevance_score, 1.0)  # Cap at 1.0
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error calculating relevance: {e}")
+            return doc.get('similarity', 0)
     
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate answer using optimized LLM"""
@@ -436,23 +497,41 @@ class LambdaGPUUniversityRAGChatbot:
                     'confidence': 'low'
                 }
             
-            # Build optimized context
+            # Build optimized context with better metadata extraction
             context_parts = []
+            sources = []
+            
             for i, doc in enumerate(context_docs[:5], 1):
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
-                source = metadata.get('source', 'Unknown')
+                
+                # Extract meaningful title from metadata
+                title = metadata.get('title', metadata.get('source', metadata.get('file_name', 'Northeastern University Document')))
+                if title == 'Unknown' or not title:
+                    title = f"Northeastern University Document {i}"
+                
+                # Extract URL if available
+                url = metadata.get('url', metadata.get('source_url', ''))
                 
                 # Truncate content for efficiency
                 if len(content) > 1000:
                     content = content[:1000] + "..."
                 
-                context_parts.append(f"[Source {i}] {source}\n{content}\n")
+                context_parts.append(f"[Source {i}] {title}\n{content}\n")
+                
+                # Prepare source information
+                sources.append({
+                    'title': title,
+                    'similarity': round(doc.get('similarity', 0), 3),
+                    'url': url,
+                    'content_preview': content[:200] + "..." if len(content) > 200 else content,
+                    'rank': i
+                })
             
             context = "\n".join(context_parts)
             
-            # Optimized prompt for faster generation
-            prompt_template = """You are a helpful assistant for Northeastern University. Answer the question based on the provided context.
+            # Enhanced prompt for better responses
+            prompt_template = """You are a knowledgeable assistant for Northeastern University. Answer the question based on the provided context from official Northeastern University documents.
 
 Context from Northeastern University documents:
 {context}
@@ -466,6 +545,7 @@ Instructions:
 - Include specific details like numbers, dates, requirements, or procedures when available
 - If the context contains relevant information, provide a thorough answer
 - Be helpful and informative about Northeastern's programs, policies, and offerings
+- If you cannot find relevant information in the context, say so clearly
 
 Answer:"""
             
@@ -479,17 +559,7 @@ Answer:"""
             response = self.llm.invoke(formatted_prompt)
             answer = response.content
             
-            # Prepare sources
-            sources = []
-            for doc in context_docs[:5]:
-                metadata = doc.get('metadata', {})
-                sources.append({
-                    'source': metadata.get('source', 'Unknown'),
-                    'similarity': round(doc.get('similarity', 0), 2),
-                    'url': metadata.get('url', '')
-                })
-            
-            # Determine confidence
+            # Determine confidence based on similarity scores
             avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:5]) / min(5, len(context_docs))
             if avg_similarity > 0.7:
                 confidence = 'high'

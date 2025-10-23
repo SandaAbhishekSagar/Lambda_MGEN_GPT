@@ -281,10 +281,13 @@ class LambdaGPUChromaService:
                     # Calculate similarity score
                     similarity = 1 - distance
                     
+                    # Enhance metadata with better title extraction
+                    enhanced_metadata = self._enhance_metadata(metadata, doc, collection_name)
+                    
                     documents.append({
                         'id': doc_id,
                         'content': doc,
-                        'metadata': metadata,
+                        'metadata': enhanced_metadata,
                         'distance': distance,
                         'similarity': similarity,
                         'collection': collection_name
@@ -295,6 +298,44 @@ class LambdaGPUChromaService:
         except Exception as e:
             logger.warning(f"[LAMBDA CHROMA] Error searching collection {task.get('collection_name', 'unknown')}: {e}")
             return []
+    
+    def _enhance_metadata(self, metadata: Dict[str, Any], content: str, collection_name: str) -> Dict[str, Any]:
+        """Enhance metadata with better title extraction and source information"""
+        try:
+            enhanced = metadata.copy()
+            
+            # Extract or generate meaningful title
+            title = enhanced.get('title', enhanced.get('source', enhanced.get('file_name', '')))
+            if not title or title == 'Unknown':
+                # Try to extract title from content
+                lines = content.split('\n')
+                for line in lines[:5]:  # Check first 5 lines
+                    line = line.strip()
+                    if len(line) > 10 and len(line) < 200:  # Reasonable title length
+                        title = line
+                        break
+                
+                # Fallback to collection-based title
+                if not title or title == 'Unknown':
+                    if 'northeastern' in collection_name.lower():
+                        title = "Northeastern University Document"
+                    else:
+                        title = f"Document from {collection_name}"
+            
+            enhanced['title'] = title
+            
+            # Ensure we have a source URL
+            if not enhanced.get('url') and not enhanced.get('source_url'):
+                enhanced['url'] = f"https://northeastern.edu"
+            
+            # Add collection information
+            enhanced['collection'] = collection_name
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.error(f"[LAMBDA CHROMA] Error enhancing metadata: {e}")
+            return metadata
     
     def _deduplicate_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Advanced deduplication with similarity scoring"""
