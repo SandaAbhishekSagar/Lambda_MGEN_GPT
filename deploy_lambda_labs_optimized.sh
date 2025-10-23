@@ -194,18 +194,31 @@ fix_huggingface_issues() {
     
     source lambda_gpu_env/bin/activate
     
-    # Uninstall problematic packages
-    pip uninstall -y huggingface-hub transformers sentence-transformers || print_warning "Some packages not found for uninstall"
+    # Uninstall all problematic packages completely
+    pip uninstall -y huggingface-hub transformers sentence-transformers torch torchvision torchaudio || print_warning "Some packages not found for uninstall"
     
-    # Install compatible versions
-    pip install huggingface-hub==0.19.4
-    pip install transformers==4.35.2
-    pip install sentence-transformers==2.2.2
+    # Clear pip cache
+    pip cache purge || print_warning "Could not clear pip cache"
+    
+    # Install compatible versions in the correct order
+    echo "📦 Installing compatible versions..."
+    pip install --no-cache-dir huggingface-hub==0.19.4
+    pip install --no-cache-dir transformers==4.35.2
+    pip install --no-cache-dir sentence-transformers==2.2.2
     
     # Verify the fix works
     echo "🧪 Verifying HuggingFace Hub compatibility fix..."
     python3 -c "
 try:
+    import huggingface_hub
+    print(f'✅ HuggingFace Hub version: {huggingface_hub.__version__}')
+    
+    import transformers
+    print(f'✅ Transformers version: {transformers.__version__}')
+    
+    import sentence_transformers
+    print(f'✅ Sentence Transformers version: {sentence_transformers.__version__}')
+    
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer('all-MiniLM-L6-v2')
     print('✅ HuggingFace Hub compatibility fix verified successfully')
