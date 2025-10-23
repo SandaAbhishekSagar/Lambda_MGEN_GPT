@@ -202,7 +202,19 @@ fix_huggingface_issues() {
     pip install transformers==4.35.2
     pip install sentence-transformers==2.2.2
     
-    print_success "HuggingFace Hub compatibility issues fixed"
+    # Verify the fix works
+    echo "🧪 Verifying HuggingFace Hub compatibility fix..."
+    python3 -c "
+try:
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    print('✅ HuggingFace Hub compatibility fix verified successfully')
+except Exception as e:
+    print(f'❌ HuggingFace Hub compatibility fix verification failed: {e}')
+    exit(1)
+"
+    
+    print_success "HuggingFace Hub compatibility issues fixed and verified"
 }
 
 # Fix ChromaDB authentication issues

@@ -14,16 +14,16 @@ langchain-community==0.0.13
 # Vector Database (REQUIRED)
 chromadb==1.0.15
 
-# GPU-Accelerated NLP and Embeddings (REQUIRED)
+# GPU-Accelerated NLP and Embeddings (REQUIRED - compatible versions)
 sentence-transformers==2.2.2
-transformers==4.36.0
+transformers==4.35.2
 torch>=2.0.0
 torchaudio>=2.0.0
 torchvision==0.20.1
 numpy<2.0.0
 
-# HuggingFace Hub (compatible version)
-huggingface-hub>=0.16.4,<0.20.0
+# HuggingFace Hub (compatible version - fixed)
+huggingface-hub==0.19.4
 
 # GPU Optimization (REQUIRED for Lambda Labs)
 accelerate>=0.24.0
