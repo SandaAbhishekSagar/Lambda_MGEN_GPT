@@ -1,0 +1,30 @@
+# Lambda Labs GPU Configuration
+# Northeastern University Chatbot - Ultra-Fast GPU Deployment
+
+# OpenAI Configuration (REQUIRED)
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.3
+OPENAI_MAX_TOKENS=2500
+
+# GPU Configuration
+CUDA_VISIBLE_DEVICES=0
+TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6"
+OMP_NUM_THREADS=4
+TOKENIZERS_PARALLELISM=false
+
+# ChromaDB Cloud Configuration (REQUIRED)
+USE_CLOUD_CHROMA=true
+CHROMADB_API_KEY=ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW
+CHROMADB_TENANT=28757e4a-f042-4b0c-ad7c-9257cd36b130
+CHROMADB_DATABASE=newtest
+
+# API Configuration
+HOST=0.0.0.0
+PORT=8000
+WORKERS=1
+
+# Performance Optimization
+BATCH_SIZE=32
+MAX_COLLECTIONS=150
+CACHE_TTL=300

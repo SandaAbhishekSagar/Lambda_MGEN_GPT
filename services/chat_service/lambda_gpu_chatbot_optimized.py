@@ -1,11 +1,13 @@
 """
 Lambda Labs GPU-Optimized Northeastern University Chatbot
-Ultra-fast RAG chatbot with GPU acceleration for sub-8-second response times
+Ultra-fast RAG chatbot with GPU acceleration for Lambda Labs deployment
 """
 
 import os
 import sys
 import time
+import torch
+import numpy as np
 import hashlib
 import pickle
 from typing import Dict, Any, List, Optional, Tuple
@@ -16,38 +18,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Import with error handling for missing dependencies
-try:
-    import torch
-    import numpy as np
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    print("Warning: torch/numpy not available, using fallback mode")
-
-try:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-    from langchain.prompts import PromptTemplate
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    print("Warning: langchain not available")
-
-try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    CHROMADB_AVAILABLE = False
-    print("Warning: chromadb not available")
-
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
-    print("Warning: sentence-transformers not available")
-
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain.prompts import PromptTemplate
+import chromadb
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
 import asyncio
 
 # Configure logging
@@ -79,7 +54,7 @@ class LambdaGPUEmbeddingManager:
     
     def _get_optimal_device(self) -> str:
         """Get optimal device for Lambda Labs GPU"""
-        if TORCH_AVAILABLE and torch.cuda.is_available():
+        if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
             logger.info(f"[LAMBDA GPU] GPU: {gpu_name}, Memory: {gpu_memory:.1f}GB")
@@ -130,9 +105,6 @@ class LambdaGPUEmbeddingManager:
     def get_embedding_model(self):
         """Get or create GPU-optimized embedding model"""
         if self.model is None:
-            if not SENTENCE_TRANSFORMERS_AVAILABLE:
-                raise ImportError("sentence-transformers not available. Please install it.")
-            
             logger.info(f"[LAMBDA GPU] Loading embedding model on {self.device}...")
             
             # Use faster, smaller model for Lambda Labs
@@ -141,7 +113,7 @@ class LambdaGPUEmbeddingManager:
             self.model = SentenceTransformer(model_name, device=self.device)
             
             # Optimize for GPU
-            if self.device == "cuda" and TORCH_AVAILABLE:
+            if self.device == "cuda":
                 self.model = self.model.half()  # Use FP16 for memory efficiency
                 torch.cuda.empty_cache()
             
@@ -152,11 +124,8 @@ class LambdaGPUEmbeddingManager:
         """Generate hash for document content"""
         return hashlib.md5(content.encode()).hexdigest()
     
-    def get_query_embedding(self, content: str):
+    def get_query_embedding(self, content: str) -> np.ndarray:
         """Get embedding for query content with GPU acceleration"""
-        if not TORCH_AVAILABLE or not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise ImportError("Required dependencies not available")
-            
         doc_hash = self.get_document_hash(content)
         
         if doc_hash in self.embeddings_cache:
@@ -165,59 +134,40 @@ class LambdaGPUEmbeddingManager:
         model = self.get_embedding_model()
         
         # GPU-optimized embedding generation
-        if TORCH_AVAILABLE:
-            with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
-                embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
-                if self.device == "cuda":
-                    embedding = embedding.cpu().numpy()[0]
-                else:
-                    embedding = embedding.numpy()[0]
-        else:
-            embedding = model.encode([content], show_progress_bar=False)[0]
+        with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
+            embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
+            if self.device == "cuda":
+                embedding = embedding.cpu().numpy()[0]
+            else:
+                embedding = embedding.numpy()[0]
         
         self.embeddings_cache[doc_hash] = embedding
         return embedding
     
-    def get_document_embedding(self, doc_id: str, content: str):
+    def get_document_embedding(self, doc_id: str, content: str) -> np.ndarray:
         """Get embedding for document content with GPU acceleration"""
-        if not TORCH_AVAILABLE or not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise ImportError("Required dependencies not available")
-            
         if doc_id in self.document_embeddings:
             return self.document_embeddings[doc_id]
         
         model = self.get_embedding_model()
         
         # GPU-optimized embedding generation
-        if TORCH_AVAILABLE:
-            with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
-                embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
-                if self.device == "cuda":
-                    embedding = embedding.cpu().numpy()[0]
-                else:
-                    embedding = embedding.numpy()[0]
-        else:
-            embedding = model.encode([content], show_progress_bar=False)[0]
+        with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
+            embedding = model.encode([content], convert_to_tensor=True, show_progress_bar=False)
+            if self.device == "cuda":
+                embedding = embedding.cpu().numpy()[0]
+            else:
+                embedding = embedding.numpy()[0]
             
         self.document_embeddings[doc_id] = embedding
         return embedding
             
-    def cosine_similarity(self, vec1, vec2) -> float:
+    def cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """Calculate cosine similarity between two vectors"""
-        if not TORCH_AVAILABLE:
-            # Fallback calculation without numpy
-            import math
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = math.sqrt(sum(a * a for a in vec1))
-            norm2 = math.sqrt(sum(b * b for b in vec2))
-            return dot_product / (norm1 * norm2)
         return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
     
-    def batch_embed_documents(self, documents: List[Tuple[str, str]]) -> Dict[str, Any]:
+    def batch_embed_documents(self, documents: List[Tuple[str, str]]) -> Dict[str, np.ndarray]:
         """Batch embed documents for efficiency"""
-        if not TORCH_AVAILABLE or not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise ImportError("Required dependencies not available")
-            
         model = self.get_embedding_model()
         embeddings = {}
         
@@ -226,25 +176,18 @@ class LambdaGPUEmbeddingManager:
             batch = documents[i:i + self.batch_size]
             doc_ids, contents = zip(*batch)
             
-            if TORCH_AVAILABLE:
-                with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
-                    batch_embeddings = model.encode(
-                        contents, 
-                        convert_to_tensor=True, 
-                        show_progress_bar=False,
-                        batch_size=self.batch_size
-                    )
-                    
-                    if self.device == "cuda":
-                        batch_embeddings = batch_embeddings.cpu().numpy()
-                    else:
-                        batch_embeddings = batch_embeddings.numpy()
-            else:
+            with torch.cuda.amp.autocast() if self.device == "cuda" else torch.no_grad():
                 batch_embeddings = model.encode(
                     contents, 
+                    convert_to_tensor=True, 
                     show_progress_bar=False,
                     batch_size=self.batch_size
                 )
+                
+                if self.device == "cuda":
+                    batch_embeddings = batch_embeddings.cpu().numpy()
+                else:
+                    batch_embeddings = batch_embeddings.numpy()
             
             for j, doc_id in enumerate(doc_ids):
                 embeddings[doc_id] = batch_embeddings[j]
@@ -261,27 +204,59 @@ class LambdaGPUChromaService:
         self.cache_ttl = 300  # 5 minutes
         
     def get_client(self):
-        """Get or create ChromaDB client"""
-        if not CHROMADB_AVAILABLE:
-            raise ImportError("ChromaDB not available. Please install chromadb.")
-            
+        """Get or create ChromaDB client with multiple authentication methods"""
         if self.client is None:
-            chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
-            chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
-            chroma_api_key = os.getenv('CHROMADB_API_KEY')
-            
-            if chroma_api_key:
-                self.client = chromadb.HttpClient(
-                    host=chroma_host,
-                    port=chroma_port,
-                    settings=Settings(
-                        chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                        chroma_client_auth_credentials=chroma_api_key
-                    )
-                )
-            else:
-                self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
-                logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
+            try:
+                # Try cloud ChromaDB first
+                use_cloud = os.getenv('USE_CLOUD_CHROMA', 'false').lower() == 'true'
+                
+                if use_cloud:
+                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
+                    chroma_tenant = os.getenv('CHROMADB_TENANT')
+                    chroma_database = os.getenv('CHROMADB_DATABASE')
+                    
+                    if chroma_api_key and chroma_tenant and chroma_database:
+                        logger.info(f"[LAMBDA GPU] Connecting to ChromaDB Cloud...")
+                        self.client = chromadb.HttpClient(
+                            host="https://api.trychroma.com",
+                            settings=Settings(
+                                chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
+                                chroma_client_auth_credentials=chroma_api_key,
+                                chroma_client_auth_token_transport_header="X-Chroma-Token"
+                            )
+                        )
+                        logger.info(f"[LAMBDA GPU] Connected to ChromaDB Cloud")
+                    else:
+                        raise ValueError("ChromaDB Cloud credentials not found")
+                else:
+                    # Local ChromaDB
+                    chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
+                    chroma_port = int(os.getenv('CHROMADB_PORT', '8000'))
+                    chroma_api_key = os.getenv('CHROMADB_API_KEY')
+                    
+                    if chroma_api_key:
+                        self.client = chromadb.HttpClient(
+                            host=chroma_host,
+                            port=chroma_port,
+                            settings=Settings(
+                                chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
+                                chroma_client_auth_credentials=chroma_api_key
+                            )
+                        )
+                    else:
+                        self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
+                        logger.info(f"[LAMBDA GPU] ChromaDB connected to {chroma_host}:{chroma_port}")
+                        
+            except Exception as e:
+                logger.error(f"[LAMBDA GPU] ChromaDB connection failed: {e}")
+                # Fallback to local client
+                try:
+                    self.client = chromadb.HttpClient(host="localhost", port=8000)
+                    logger.info(f"[LAMBDA GPU] Fallback to local ChromaDB")
+                except Exception as fallback_e:
+                    logger.error(f"[LAMBDA GPU] Fallback connection also failed: {fallback_e}")
+                    raise
+                    
         return self.client
     
     def get_batch_collections(self, force_refresh: bool = False) -> List[str]:
@@ -337,7 +312,7 @@ class LambdaGPUChromaService:
             logger.info(f"[LAMBDA GPU] Using fallback: {len(fallback_collections)} collections")
             return fallback_collections
     
-    def search_documents_parallel(self, query_embedding, n_results: int = 10) -> List[Dict[str, Any]]:
+    def search_documents_parallel(self, query_embedding: np.ndarray, n_results: int = 10) -> List[Dict[str, Any]]:
         """Parallel search across collections for maximum speed"""
         try:
             collections = self.get_batch_collections()
@@ -345,7 +320,7 @@ class LambdaGPUChromaService:
                 return []
             
             # Limit collections for performance (optimized for Lambda Labs)
-            max_collections = 150  # Increased from 100 for better coverage
+            max_collections = int(os.getenv('MAX_COLLECTIONS', '150'))
             collections_to_search = collections[:max_collections]
             
             logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel")
@@ -377,7 +352,7 @@ class LambdaGPUChromaService:
             logger.error(f"[LAMBDA GPU] Error in parallel search: {e}")
             return []
             
-    def _search_single_collection(self, collection_name: str, query_embedding, n_results: int) -> List[Dict[str, Any]]:
+    def _search_single_collection(self, collection_name: str, query_embedding: np.ndarray, n_results: int) -> List[Dict[str, Any]]:
         """Search a single collection"""
         try:
             client = self.get_client()
@@ -425,14 +400,11 @@ class LambdaGPUUniversityRAGChatbot:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
-        if not LANGCHAIN_AVAILABLE:
-            raise ImportError("LangChain not available. Please install langchain-openai.")
-        
         # Initialize OpenAI LLM with optimized settings
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",  # Fast and efficient
-            temperature=0.3,
-            max_tokens=2500,
+            model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
+            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '2500')),
             openai_api_key=self.openai_api_key,
             request_timeout=20,  # Reduced timeout for faster responses
             streaming=False
@@ -449,12 +421,12 @@ class LambdaGPUUniversityRAGChatbot:
     def get_gpu_info(self) -> Dict[str, Any]:
         """Get GPU information for monitoring"""
         gpu_info = {
-            'cuda_available': TORCH_AVAILABLE and torch.cuda.is_available() if TORCH_AVAILABLE else False,
+            'cuda_available': torch.cuda.is_available(),
             'device': self.embedding_manager.device,
             'batch_size': self.embedding_manager.batch_size
         }
         
-        if TORCH_AVAILABLE and torch.cuda.is_available():
+        if torch.cuda.is_available():
             gpu_info.update({
                 'gpu_name': torch.cuda.get_device_name(0),
                 'gpu_memory_total': torch.cuda.get_device_properties(0).total_memory / 1024**3,
@@ -688,7 +660,7 @@ Answer:"""
         """Clear GPU cache and embeddings cache"""
         try:
             # Clear GPU cache
-            if TORCH_AVAILABLE and torch.cuda.is_available():
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
             # Clear embeddings cache
@@ -717,7 +689,7 @@ def get_chatbot() -> LambdaGPUUniversityRAGChatbot:
 
 def clear_gpu_cache():
     """Clear GPU cache for memory management"""
-    if TORCH_AVAILABLE and torch.cuda.is_available():
+    if torch.cuda.is_available():
         torch.cuda.empty_cache()
         logger.info("[LAMBDA GPU] GPU cache cleared")
 
