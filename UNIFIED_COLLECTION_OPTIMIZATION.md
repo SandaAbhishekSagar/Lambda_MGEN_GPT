@@ -53,9 +53,13 @@ collection = 'documents_unified'
 ```bash
 export PERFORMANCE_MODE=ultra_fast
 export USE_CLOUD_CHROMA=true
+export OPENAI_MODEL=gpt-4.1-mini
+export OPENAI_MAX_TOKENS=300
+export OPENAI_TEMPERATURE=0.2
 ```
 - **Search results**: 15 documents
-- **Response time**: 2-4 seconds
+- **Response time**: 3-8 seconds (vs. 12-16 seconds before)
+- **Model**: gpt-4.1-mini with streaming
 - **Use case**: Production chat
 
 #### Fast Mode
@@ -117,11 +121,11 @@ def search_documents_unified(self, query_embedding, n_results=10, query=""):
 | Balanced | 24+ seconds | 3-4 seconds | 83% faster |
 
 ### Total Response Time
-| Mode | Before | After | Improvement |
-|------|--------|-------|-------------|
-| Ultra-Fast | 39+ seconds | 3-5 seconds | 87% faster |
-| Fast | 39+ seconds | 4-6 seconds | 85% faster |
-| Balanced | 39+ seconds | 5-8 seconds | 80% faster |
+| Mode | Before (Multi-Collection) | After (Unified + gpt-4.1-mini) | Improvement |
+|------|---------------------------|--------------------------------|-------------|
+| Ultra-Fast | 39+ seconds | 3-8 seconds | 80-90% faster |
+| Fast | 39+ seconds | 4-8 seconds | 80-85% faster |
+| Balanced | 39+ seconds | 5-10 seconds | 75-80% faster |
 
 ## Usage Examples
 

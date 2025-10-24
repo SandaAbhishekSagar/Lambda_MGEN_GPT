@@ -436,14 +436,14 @@ class LambdaGPUUniversityRAGChatbot:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
-        # Initialize OpenAI LLM with optimized settings for speed
+        # Initialize OpenAI LLM with ultra-fast settings
         self.llm = ChatOpenAI(
-            model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
-            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.2')),
-            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '300')),  # Much reduced for speed
+            model=os.getenv('OPENAI_MODEL', 'gpt-4.1-mini'),  # Faster model
+            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.2')),  # Lower temperature for faster generation
+            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '300')),  # Reduced tokens for speed
             openai_api_key=self.openai_api_key,
             request_timeout=15,  # Increased timeout to prevent timeouts
-            streaming=False,
+            streaming=True,  # Enable streaming for faster time-to-first-token
             max_retries=1  # Reduced retries for speed
         )
         

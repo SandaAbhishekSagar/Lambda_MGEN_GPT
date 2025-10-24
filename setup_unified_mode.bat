@@ -7,10 +7,10 @@ REM Set performance mode to unified
 set PERFORMANCE_MODE=unified
 set USE_CLOUD_CHROMA=true
 
-REM Optimize OpenAI settings for speed
-set OPENAI_MAX_TOKENS=400
+REM Optimize OpenAI settings for ultra-fast speed
+set OPENAI_MAX_TOKENS=300
 set OPENAI_TEMPERATURE=0.2
-set OPENAI_MODEL=gpt-4o-mini
+set OPENAI_MODEL=gpt-4.1-mini
 
 REM Optimize search settings for unified collection
 set MAX_WORKERS=10
