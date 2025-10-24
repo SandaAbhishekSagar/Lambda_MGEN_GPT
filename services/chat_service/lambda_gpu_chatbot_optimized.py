@@ -35,6 +35,7 @@ class ChatResponse:
     answer: str
     sources: List[Dict[str, Any]]
     confidence: str
+    confidence_percentage: float
     timing: Dict[str, float]
     gpu_info: Dict[str, Any]
 
@@ -494,8 +495,8 @@ class LambdaGPUUniversityRAGChatbot:
             content = doc.get('content', '').lower()
             metadata = doc.get('metadata', {})
             
-            # Base similarity from embedding
-            similarity = doc.get('similarity', 0)
+            # Base similarity from embedding (ensure positive)
+            similarity = max(0.1, doc.get('similarity', 0.1))
             
             # Boost score for title matches
             title = metadata.get('title', '').lower()
@@ -506,14 +507,17 @@ class LambdaGPUUniversityRAGChatbot:
             content_matches = sum(1 for term in query_terms if term in content)
             content_boost = content_matches / len(query_terms) if query_terms else 0
             
-            # Combine scores
+            # Combine scores with minimum positive value
             relevance_score = similarity + (title_boost * 0.3) + (content_boost * 0.2)
+            
+            # Ensure minimum positive score
+            relevance_score = max(0.2, relevance_score)
             
             return min(relevance_score, 1.0)  # Cap at 1.0
             
         except Exception as e:
             logger.error(f"[LAMBDA GPU] Error calculating relevance: {e}")
-            return doc.get('similarity', 0)
+            return max(0.3, doc.get('similarity', 0.3))
     
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate answer using optimized LLM"""
@@ -569,11 +573,17 @@ Question: {question}
 Instructions:
 - Provide a detailed, comprehensive answer about Northeastern University
 - Use information from the context provided above
-- Structure your response clearly with bullet points or paragraphs
+- Structure your response clearly with:
+  * Clear headings and subheadings
+  * Bullet points for lists
+  * Numbered steps for processes
+  * Bold text for important information
 - Include specific details like numbers, dates, requirements, or procedures when available
 - If the context contains relevant information, provide a thorough answer
 - Be helpful and informative about Northeastern's programs, policies, and offerings
 - If you cannot find relevant information in the context, say so clearly
+- Make your answer engaging and easy to read
+- Use markdown formatting for better structure
 
 Answer:"""
             
@@ -587,11 +597,23 @@ Answer:"""
             response = self.llm.invoke(formatted_prompt)
             answer = response.content
             
-            # Determine confidence based on similarity scores
-            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:10]) / min(10, len(context_docs))
-            if avg_similarity > 0.7:
+            # Determine confidence based on similarity scores and relevance
+            similarity_scores = [doc.get('similarity', 0) for doc in context_docs[:10]]
+            relevance_scores = [doc.get('relevance_score', 0) for doc in context_docs[:10]]
+            
+            # Calculate average similarity and relevance
+            avg_similarity = sum(similarity_scores) / len(similarity_scores) if similarity_scores else 0
+            avg_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0
+            
+            # Calculate overall confidence (weighted average)
+            overall_confidence = (avg_similarity * 0.6 + avg_relevance * 0.4)
+            
+            # Convert to percentage
+            confidence_percentage = max(0, min(100, overall_confidence * 100))
+            
+            if confidence_percentage > 70:
                 confidence = 'high'
-            elif avg_similarity > 0.5:
+            elif confidence_percentage > 50:
                 confidence = 'medium'
             else:
                 confidence = 'low'
@@ -600,6 +622,7 @@ Answer:"""
                 'answer': answer,
                 'sources': sources,
                 'confidence': confidence,
+                'confidence_percentage': confidence_percentage,
                 'documents_searched': len(context_docs)
             }
             
@@ -645,6 +668,7 @@ Answer:"""
             answer=result['answer'],
             sources=result['sources'],
             confidence=result['confidence'],
+            confidence_percentage=result.get('confidence_percentage', 0),
             timing=timing,
             gpu_info=gpu_info
         )
