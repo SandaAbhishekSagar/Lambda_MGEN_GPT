@@ -453,7 +453,7 @@ class LambdaGPUUniversityRAGChatbot:
             total_time = time.time() - start_time
             
             logger.info(f"[LAMBDA GPU] Search completed in {total_time:.2f}s (embedding: {embedding_time:.2f}s, search: {search_time:.2f}s)")
-            logger.info(f"[LAMBDA GPU] Found {len(documents)} documents, filtered to {len(filtered_docs)} high-quality results")
+            logger.info(f"[LAMBDA GPU] Found {len(documents)} documents, showing top {len(filtered_docs)} results")
             
             return filtered_docs
             
@@ -462,7 +462,7 @@ class LambdaGPUUniversityRAGChatbot:
             return []
     
     def _filter_and_rank_documents(self, documents: List[Dict[str, Any]], query: str, n_results: int) -> List[Dict[str, Any]]:
-        """Filter and rank documents by relevance and quality"""
+        """Filter and rank documents by relevance - show top 10 without high-quality filtering"""
         try:
             if not documents:
                 return []
@@ -470,26 +470,23 @@ class LambdaGPUUniversityRAGChatbot:
             # Extract query terms for relevance scoring
             query_terms = set(query.lower().split())
             
-            # Score and filter documents
+            # Score all documents (no filtering)
             scored_docs = []
             for doc in documents:
                 # Calculate relevance score
                 relevance_score = self._calculate_relevance_score(doc, query_terms)
-                
-                # Only include documents with reasonable relevance
-                if relevance_score > 0.1:  # Minimum relevance threshold
-                    doc['relevance_score'] = relevance_score
-                    scored_docs.append(doc)
+                doc['relevance_score'] = relevance_score
+                scored_docs.append(doc)
             
             # Sort by relevance score (higher is better)
             scored_docs.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
             
-            # Return top N results
-            return scored_docs[:n_results]
+            # Return top 10 results (no high-quality filtering)
+            return scored_docs[:10]
             
         except Exception as e:
             logger.error(f"[LAMBDA GPU] Error filtering documents: {e}")
-            return documents[:n_results]  # Fallback to original results
+            return documents[:10]  # Fallback to top 10 original results
     
     def _calculate_relevance_score(self, doc: Dict[str, Any], query_terms: set) -> float:
         """Calculate relevance score for a document"""
@@ -532,7 +529,7 @@ class LambdaGPUUniversityRAGChatbot:
             context_parts = []
             sources = []
             
-            for i, doc in enumerate(context_docs[:5], 1):
+            for i, doc in enumerate(context_docs[:10], 1):
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
                 
@@ -591,7 +588,7 @@ Answer:"""
             answer = response.content
             
             # Determine confidence based on similarity scores
-            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:5]) / min(5, len(context_docs))
+            avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs[:10]) / min(10, len(context_docs))
             if avg_similarity > 0.7:
                 confidence = 'high'
             elif avg_similarity > 0.5:
