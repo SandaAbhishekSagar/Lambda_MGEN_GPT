@@ -332,15 +332,15 @@ class LambdaGPUChromaService:
                     future = executor.submit(self._search_single_collection, collection_name, query_embedding, n_results * 2)
                     futures.append(future)
                 
-                # Collect results
-                for future in futures:
-                    try:
-                        results = future.result(timeout=5)  # 5 second timeout per collection
-                        if results:
-                            all_documents.extend(results)
-                    except Exception as e:
-                        logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
-                        continue
+                 # Collect results
+                 for future in futures:
+                     try:
+                         results = future.result(timeout=3)  # 3 second timeout per collection for speed
+                         if results:
+                             all_documents.extend(results)
+                     except Exception as e:
+                         logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
+                         continue
             
             logger.info(f"[LAMBDA GPU] Found {len(all_documents)} total documents")
             return all_documents[:n_results]
@@ -397,15 +397,16 @@ class LambdaGPUUniversityRAGChatbot:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
-        # Initialize OpenAI LLM with optimized settings
-        self.llm = ChatOpenAI(
-            model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
-            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
-            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '2500')),
-            openai_api_key=self.openai_api_key,
-            request_timeout=20,  # Reduced timeout for faster responses
-            streaming=False
-        )
+         # Initialize OpenAI LLM with optimized settings for speed
+         self.llm = ChatOpenAI(
+             model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+             temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
+             max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '2500')),
+             openai_api_key=self.openai_api_key,
+             request_timeout=15,  # Reduced timeout for faster responses
+             streaming=False,
+             max_retries=1  # Reduce retries for speed
+         )
         
         # Initialize OpenAI embeddings for fallback
         self.openai_embeddings = OpenAIEmbeddings(
@@ -447,6 +448,14 @@ class LambdaGPUUniversityRAGChatbot:
             search_start = time.time()
             documents = self.chroma_service.search_documents_parallel(query_embedding, n_results * 2)  # Get more for filtering
             search_time = time.time() - search_start
+            
+            # Improve similarity scores to avoid negative confidence (Railway logic)
+            for doc in documents:
+                if 'similarity' in doc:
+                    # Ensure similarity is positive and meaningful
+                    doc['similarity'] = max(0.2, doc['similarity'])  # Higher minimum for better confidence
+                else:
+                    doc['similarity'] = 0.3  # Default positive similarity
             
             # Quality filtering and relevance scoring
             filtered_docs = self._filter_and_rank_documents(documents, query, n_results)
@@ -490,34 +499,79 @@ class LambdaGPUUniversityRAGChatbot:
             return documents[:10]  # Fallback to top 10 original results
     
     def _calculate_relevance_score(self, doc: Dict[str, Any], query_terms: set) -> float:
-        """Calculate relevance score for a document"""
+        """Calculate relevance score for a document - enhanced version from Railway"""
         try:
             content = doc.get('content', '').lower()
             metadata = doc.get('metadata', {})
             
-            # Base similarity from embedding (ensure positive)
-            similarity = max(0.1, doc.get('similarity', 0.1))
+            # Get base similarity from embedding (ensure positive)
+            similarity = doc.get('similarity', 0)
             
-            # Boost score for title matches
+            # Calculate content relevance to query terms
+            content_matches = sum(1 for term in query_terms if term in content)
+            content_relevance = content_matches / len(query_terms) if query_terms else 0
+            
+            # Boost for title matches
             title = metadata.get('title', '').lower()
             title_matches = sum(1 for term in query_terms if term in title)
             title_boost = title_matches / len(query_terms) if query_terms else 0
             
-            # Boost score for content matches
-            content_matches = sum(1 for term in query_terms if term in content)
-            content_boost = content_matches / len(query_terms) if query_terms else 0
+            # Combine scores with proper weighting (Railway logic)
+            relevance_score = (similarity * 0.6) + (content_relevance * 0.3) + (title_boost * 0.1)
             
-            # Combine scores with minimum positive value
-            relevance_score = similarity + (title_boost * 0.3) + (content_boost * 0.2)
+            # Ensure minimum positive score to avoid negative confidence
+            relevance_score = max(0.1, relevance_score)
             
-            # Ensure minimum positive score
-            relevance_score = max(0.2, relevance_score)
-            
-            return min(relevance_score, 1.0)  # Cap at 1.0
+            return min(relevance_score, 1.0)
             
         except Exception as e:
             logger.error(f"[LAMBDA GPU] Error calculating relevance: {e}")
-            return max(0.3, doc.get('similarity', 0.3))
+            return 0.2  # Default positive score
+    
+    def _validate_and_improve_answer(self, question: str, answer: str, context: str) -> str:
+        """Validate answer and regenerate if needed (Railway logic)"""
+        
+        answer_lower = answer.lower()
+        
+        # Check for generic indicators
+        generic_phrases = [
+            'northeastern university offers a variety',
+            'northeastern university provides',
+            'as an expert assistant',
+            'based on the context',
+            'i can provide you with information',
+            'northeastern university is',
+            'the university offers',
+            'northeastern provides'
+        ]
+        
+        is_generic = any(phrase in answer_lower for phrase in generic_phrases)
+        
+        # Check if answer directly addresses the question
+        question_terms = set(question.lower().split())
+        answer_contains_question_terms = any(term in answer_lower for term in question_terms)
+        
+        # If answer is generic or off-topic, regenerate
+        if is_generic or not answer_contains_question_terms:
+            logger.info(f"[LAMBDA GPU] Regenerating answer - detected generic response")
+            specific_prompt = f"""Answer this specific question: "{question}"
+Use information from this context: {context}
+
+CRITICAL INSTRUCTIONS:
+- Provide a DETAILED, COMPREHENSIVE answer about Northeastern University programs
+- Use information from the provided context, but also draw reasonable conclusions
+- Structure your response clearly with bullet points or organized paragraphs
+- Include ALL relevant details: specific numbers, dates, requirements, procedures
+- Be thorough and well-organized, not brief
+- If you find relevant information about programs, degrees, or academic offerings, include it
+- Focus on being helpful and informative about Northeastern's academic programs
+- Use the context as your primary source but provide a complete answer
+
+Provide a detailed, well-structured answer about Northeastern University programs:"""
+            response = self.llm.invoke(specific_prompt)
+            return response.content if hasattr(response, 'content') else str(response)
+        
+        return answer
     
     def generate_answer(self, question: str, context_docs: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate answer using optimized LLM"""
@@ -562,8 +616,8 @@ class LambdaGPUUniversityRAGChatbot:
             
             context = "\n".join(context_parts)
             
-            # Enhanced prompt for better responses
-            prompt_template = """You are a knowledgeable assistant for Northeastern University. Answer the question based on the provided context from official Northeastern University documents.
+            # Enhanced prompt for better responses (Railway logic)
+            prompt_template = """You are an expert Northeastern University assistant. Provide a COMPREHENSIVE and WELL-STRUCTURED answer using the provided context.
 
 Context from Northeastern University documents:
 {context}
@@ -571,19 +625,13 @@ Context from Northeastern University documents:
 Question: {question}
 
 Instructions:
-- Provide a detailed, comprehensive answer about Northeastern University
-- Use information from the context provided above
-- Structure your response clearly with:
-  * Clear headings and subheadings
-  * Bullet points for lists
-  * Numbered steps for processes
-  * Bold text for important information
-- Include specific details like numbers, dates, requirements, or procedures when available
-- If the context contains relevant information, provide a thorough answer
-- Be helpful and informative about Northeastern's programs, policies, and offerings
-- If you cannot find relevant information in the context, say so clearly
-- Make your answer engaging and easy to read
-- Use markdown formatting for better structure
+- Answer ONLY the specific question asked
+- Use EXACT information from the provided context
+- Structure your response clearly with bullet points or organized paragraphs
+- Include specific details like numbers, dates, requirements, or procedures
+- Be thorough but stay focused on the specific question
+- If the context doesn't contain specific information, provide helpful guidance
+- Be conversational, helpful, and professional
 
 Answer:"""
             
@@ -597,19 +645,36 @@ Answer:"""
             response = self.llm.invoke(formatted_prompt)
             answer = response.content
             
-            # Determine confidence based on similarity scores and relevance
-            similarity_scores = [doc.get('similarity', 0) for doc in context_docs[:10]]
-            relevance_scores = [doc.get('relevance_score', 0) for doc in context_docs[:10]]
+            # Validate and improve answer if needed (Railway logic)
+            answer = self._validate_and_improve_answer(question, answer, context)
             
-            # Calculate average similarity and relevance
-            avg_similarity = sum(similarity_scores) / len(similarity_scores) if similarity_scores else 0
-            avg_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0
-            
-            # Calculate overall confidence (weighted average)
-            overall_confidence = (avg_similarity * 0.6 + avg_relevance * 0.4)
-            
-            # Convert to percentage
-            confidence_percentage = max(0, min(100, overall_confidence * 100))
+            # Calculate confidence based on multiple factors like Railway code
+            if not context_docs:
+                confidence_percentage = 0.0
+            else:
+                # Factor 1: Average similarity of retrieved documents
+                avg_similarity = sum(doc.get('similarity', 0) for doc in context_docs) / len(context_docs)
+                
+                # Factor 2: Number of relevant documents
+                doc_count_score = min(len(context_docs) / 10.0, 1.0)
+                
+                # Factor 3: Answer length (comprehensive answers indicate good information)
+                answer_length_score = min(len(answer) / 500.0, 1.0)
+                
+                # Factor 4: Content diversity (different sources)
+                unique_sources = len(set(doc.get('source_url', '') for doc in context_docs))
+                source_diversity_score = min(unique_sources / 5.0, 1.0)
+                
+                # Weighted combination
+                overall_confidence = (
+                    avg_similarity * 0.4 +
+                    doc_count_score * 0.2 +
+                    answer_length_score * 0.2 +
+                    source_diversity_score * 0.2
+                )
+                
+                # Convert to percentage
+                confidence_percentage = max(0, min(100, overall_confidence * 100))
             
             if confidence_percentage > 70:
                 confidence = 'high'
