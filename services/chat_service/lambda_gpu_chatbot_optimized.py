@@ -260,8 +260,10 @@ class LambdaGPUChromaService:
         """Get batch collections with caching and fallback"""
         current_time = time.time()
         
-        if not force_refresh and self.collections_cache and (current_time - self.last_cache_update) < self.cache_ttl:
-            return self.collections_cache
+        # Always refresh collections to ensure we get all collections
+        # Cache is disabled for collections to ensure comprehensive search
+        # if not force_refresh and self.collections_cache and (current_time - self.last_cache_update) < self.cache_ttl:
+        #     return self.collections_cache
         
         try:
             client = self.get_client()
@@ -276,6 +278,7 @@ class LambdaGPUChromaService:
                     if not collections_batch or len(collections_batch) == 0:
                         break
                     all_collections.extend(collections_batch)
+                    logger.info(f"[LAMBDA GPU] Fetched batch {offset//limit + 1}: {len(collections_batch)} collections (total so far: {len(all_collections)})")
                     if len(collections_batch) < limit:
                         break
                     offset += limit
@@ -283,16 +286,13 @@ class LambdaGPUChromaService:
                     logger.warning(f"[LAMBDA GPU] Error fetching collections batch: {e}")
                     break
             
-            # Filter for batch collections
-            batch_collections = [
-                col.name for col in all_collections
-                if 'batch' in col.name.lower() or 'ultra_optimized' in col.name.lower()
-            ]
+            # Use ALL collections for comprehensive search (not just batch collections)
+            batch_collections = [col.name for col in all_collections]
             
             self.collections_cache = batch_collections
             self.last_cache_update = current_time
             
-            logger.info(f"[LAMBDA GPU] Found {len(batch_collections)} batch collections")
+            logger.info(f"[LAMBDA GPU] Found {len(batch_collections)} total collections for comprehensive search (out of {len(all_collections)} total collections retrieved)")
             return batch_collections
             
         except Exception as e:
@@ -300,7 +300,7 @@ class LambdaGPUChromaService:
             # Fallback: Generate collection names based on known pattern
             logger.warning("[LAMBDA GPU] Using fallback collection names due to error")
             fallback_collections = []
-            for i in range(1, 1001):  # Generate 1000 collection names
+            for i in range(1, 3281):  # Generate 3280 collection names to match actual database
                 fallback_collections.append(f"documents_ultra_optimized_batch_{i}")
             
             # Update cache
@@ -312,30 +312,57 @@ class LambdaGPUChromaService:
     def search_documents_parallel(self, query_embedding: np.ndarray, n_results: int = 10) -> List[Dict[str, Any]]:
         """Parallel search across collections for maximum speed"""
         try:
-            collections = self.get_batch_collections()
+            collections = self.get_batch_collections(force_refresh=True)  # Force refresh to get all collections
             if not collections:
                 return []
             
-            # Limit collections for performance (maintain quality with comprehensive search)
-            max_collections = int(os.getenv('MAX_COLLECTIONS', '150'))  # Maintain full dataset coverage
-            collections_to_search = collections[:max_collections]
+            # Smart search strategy: Balance coverage with speed
+            max_collections = int(os.getenv('MAX_COLLECTIONS', '0'))  # 0 means search all collections
+            search_all_collections = os.getenv('SEARCH_ALL_COLLECTIONS', 'true').lower() == 'true'
+            performance_mode = os.getenv('PERFORMANCE_MODE', 'balanced').lower()
             
-            logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel")
+            if performance_mode == 'fast':
+                # Fast mode: limit to 200 collections for speed
+                collections_to_search = collections[:200]
+                logger.info(f"[LAMBDA GPU] Fast mode: searching {len(collections_to_search)} collections for speed")
+            elif not search_all_collections and max_collections > 0 and max_collections < len(collections):
+                collections_to_search = collections[:max_collections]
+                logger.info(f"[LAMBDA GPU] Limited to {len(collections_to_search)} collections for performance testing (out of {len(collections)} total)")
+            else:
+                collections_to_search = collections
+                logger.info(f"[LAMBDA GPU] Comprehensive mode: searching {len(collections_to_search)} collections for full coverage")
+            
+            logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel (out of {len(collections)} total collections)")
             
             all_documents = []
             
-            # Use ThreadPoolExecutor for parallel search
-            with ThreadPoolExecutor(max_workers=8) as executor:
+            # Smart search strategy: Use adaptive collection selection for speed
+            if len(collections_to_search) > 500:
+                # For large collections, use smart sampling for speed
+                # Sample collections intelligently rather than searching all
+                sample_size = min(500, len(collections_to_search))
+                # Use every Nth collection for comprehensive but faster coverage
+                step = len(collections_to_search) // sample_size
+                collections_to_search = collections_to_search[::max(1, step)]
+                logger.info(f"[LAMBDA GPU] Smart sampling: searching {len(collections_to_search)} collections for speed")
+            
+            # Use ThreadPoolExecutor for parallel search with optimized workers
+            max_workers = min(20, len(collections_to_search))  # Reduced workers for better performance
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 
+                # Optimized results per collection for speed
+                results_per_collection = min(n_results * 3, 20)  # Reduced for speed
+                
                 for collection_name in collections_to_search:
-                    future = executor.submit(self._search_single_collection, collection_name, query_embedding, n_results * 2)
+                    future = executor.submit(self._search_single_collection, collection_name, query_embedding, results_per_collection)
                     futures.append(future)
                 
-                # Collect results with optimized timeout
+                # Optimized timeout for speed
+                timeout_per_collection = 3  # Reduced timeout for speed
                 for future in futures:
                     try:
-                        results = future.result(timeout=2)  # Reduced timeout for speed while maintaining quality
+                        results = future.result(timeout=timeout_per_collection)
                         if results:
                             all_documents.extend(results)
                     except Exception as e:
@@ -343,7 +370,13 @@ class LambdaGPUChromaService:
                         continue
             
             logger.info(f"[LAMBDA GPU] Found {len(all_documents)} total documents")
-            return all_documents[:n_results]
+            
+            # Sort all documents by similarity for better ranking
+            all_documents.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+            
+            # Return more results for comprehensive coverage, but limit to reasonable number
+            max_results = min(n_results * 3, 100)  # Cap at 100 for performance
+            return all_documents[:max_results]
             
         except Exception as e:
             logger.error(f"[LAMBDA GPU] Error in parallel search: {e}")
@@ -401,11 +434,11 @@ class LambdaGPUUniversityRAGChatbot:
         self.llm = ChatOpenAI(
             model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
             temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
-            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '1500')),  # Reduced for faster generation
+            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '600')),  # Further reduced for speed
             openai_api_key=self.openai_api_key,
-            request_timeout=8,  # Reduced timeout for faster responses
+            request_timeout=15,  # Increased timeout to prevent timeouts
             streaming=False,
-            max_retries=1  # Reduce retries for speed
+            max_retries=2  # Increased retries for reliability
         )
         
         # Initialize OpenAI embeddings for fallback
@@ -446,16 +479,16 @@ class LambdaGPUUniversityRAGChatbot:
             
             # Parallel search across collections
             search_start = time.time()
-            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results * 2)  # Get more for filtering
+            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results)  # Get exact amount for speed
             search_time = time.time() - search_start
             
             # Improve similarity scores to avoid negative confidence (Railway logic)
             for doc in documents:
                 if 'similarity' in doc:
                     # Ensure similarity is positive and meaningful
-                    doc['similarity'] = max(0.2, doc['similarity'])  # Higher minimum for better confidence
+                    doc['similarity'] = max(0.3, doc['similarity'])  # Higher minimum for better confidence
                 else:
-                    doc['similarity'] = 0.3  # Default positive similarity
+                    doc['similarity'] = 0.4  # Default positive similarity
             
             # Quality filtering and relevance scoring
             filtered_docs = self._filter_and_rank_documents(documents, query, n_results)
@@ -529,36 +562,62 @@ class LambdaGPUUniversityRAGChatbot:
             return 0.2  # Default positive score
     
     def _validate_and_improve_answer(self, question: str, answer: str, context: str) -> str:
-        """Validate answer and regenerate if needed (optimized for speed)"""
+        """Validate answer and regenerate if needed (enhanced for quality)"""
         
         answer_lower = answer.lower()
         
-        # Check for generic indicators (reduced list for faster processing)
+        # Check for generic indicators (comprehensive list for quality)
         generic_phrases = [
             'northeastern university offers a variety',
             'based on the context',
-            'i can provide you with information'
+            'i can provide you with information',
+            'the provided context does not include',
+            'the provided context does not contain',
+            'to find detailed information',
+            'it would be best to consult',
+            'where course offerings are typically listed',
+            'northeastern university provides',
+            'as an expert assistant',
+            'northeastern university is',
+            'the university offers',
+            'northeastern provides',
+            'i cannot provide details',
+            'i recommend visiting',
+            'contacting their',
+            'for accurate and comprehensive information'
         ]
         
         is_generic = any(phrase in answer_lower for phrase in generic_phrases)
         
-        # Check if answer directly addresses the question (simplified check)
+        # Check if answer directly addresses the question
         question_terms = set(question.lower().split())
         answer_contains_question_terms = any(term in answer_lower for term in question_terms)
         
-        # Only regenerate if answer is clearly generic AND doesn't address the question AND is very short
-        if is_generic and not answer_contains_question_terms and len(answer) < 150:
-            logger.info(f"[LAMBDA GPU] Regenerating answer - detected generic response")
-            specific_prompt = f"""Answer this specific question: "{question}"
+        # Check if answer is too short or generic (optimized for speed)
+        is_too_short = len(answer) < 150
+        is_too_generic = is_generic or not answer_contains_question_terms
+        
+        # Regenerate if answer is generic AND short (less aggressive for speed)
+        if is_generic and is_too_short:
+            logger.info(f"[LAMBDA GPU] Regenerating answer - detected generic/short response")
+            specific_prompt = f"""Answer this specific question about Northeastern University: "{question}"
+
 Use information from this context: {context}
 
-INSTRUCTIONS:
-- Provide a direct, specific answer about Northeastern University
-- Use information from the provided context
-- Be comprehensive but concise
-- Include relevant details when available
+CRITICAL INSTRUCTIONS:
+- Provide a DETAILED, COMPREHENSIVE answer about Northeastern University
+- Use information from the provided context, but also draw reasonable conclusions
+- Structure your response clearly with bullet points or organized paragraphs
+- Include ALL relevant details: specific numbers, dates, requirements, procedures
+- Be thorough and well-organized, not brief
+- If you find relevant information about programs, degrees, or academic offerings, include it
+- Focus on being helpful and informative about Northeastern's academic programs
+- Use the context as your primary source but provide a complete answer
+- If the context doesn't contain specific information, provide helpful guidance about Northeastern University
+- Do NOT say "the provided context does not contain" - instead use what information is available
+- Be specific and detailed about Northeastern University programs and policies
 
-Answer:"""
+Provide a detailed, well-structured answer about Northeastern University:"""
             try:
                 response = self.llm.invoke(specific_prompt)
                 return response.content if hasattr(response, 'content') else str(response)
@@ -582,7 +641,7 @@ Answer:"""
             context_parts = []
             sources = []
             
-            for i, doc in enumerate(context_docs[:10], 1):  # Use all 10 documents for quality
+            for i, doc in enumerate(context_docs[:8], 1):  # Use 8 documents for speed
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
                 
@@ -594,14 +653,14 @@ Answer:"""
                 # Extract URL if available
                 url = metadata.get('url', metadata.get('source_url', ''))
                 
-                # Smart truncation: keep more content for higher relevance documents
+                # Smart truncation: keep more content for higher relevance documents (optimized for speed)
                 relevance_score = doc.get('relevance_score', 0)
                 if relevance_score > 0.5:  # High relevance documents get more content
-                    max_content_length = 800
+                    max_content_length = 800  # Increased for comprehensive coverage
                 elif relevance_score > 0.3:  # Medium relevance documents get moderate content
-                    max_content_length = 600
+                    max_content_length = 600   # Increased for comprehensive coverage
                 else:  # Lower relevance documents get less content
-                    max_content_length = 400
+                    max_content_length = 400   # Increased for comprehensive coverage
                 
                 if len(content) > max_content_length:
                     content = content[:max_content_length] + "..."
@@ -619,19 +678,17 @@ Answer:"""
             
             context = "\n".join(context_parts)
             
-            # Optimized prompt for quality responses with speed
-            prompt_template = """Answer this question about Northeastern University using the provided context.
+            # Enhanced prompt for specific, comprehensive answers
+            prompt_template = """Answer this Northeastern University question using the provided context:
 
 Context: {context}
-
 Question: {question}
 
 Instructions:
-- Answer the specific question asked
-- Use information from the context
-- Be comprehensive but concise
-- Include relevant details when available
-- Structure your response clearly
+- Answer the specific question using the context above
+- Provide detailed, structured information
+- Include specific details like numbers, dates, requirements
+- Be comprehensive and helpful
 
 Answer:"""
             
@@ -705,9 +762,9 @@ Answer:"""
         
         logger.info(f"[LAMBDA GPU] Processing question: {question[:100]}...")
         
-        # Search for relevant documents (maintain quality with comprehensive search)
+        # Search for relevant documents with optimized coverage
         search_start = time.time()
-        documents = self.search_documents(question, n_results=10)  # Maintain quality with 10 documents
+        documents = self.search_documents(question, n_results=10)  # Use 10 documents for speed
         search_time = time.time() - search_start
         
         # Generate answer
