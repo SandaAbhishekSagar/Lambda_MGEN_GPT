@@ -25,16 +25,26 @@ echo ""
 echo "3. Installing compatible versions in correct order..."
 echo "===================================================="
 
-# Install in the correct order to avoid conflicts
+# Install PyTorch with CUDA support first
+pip install --no-cache-dir --force-reinstall torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
+# Install HuggingFace packages
 pip install --no-cache-dir --force-reinstall huggingface-hub==0.19.4
 pip install --no-cache-dir --force-reinstall transformers==4.35.2
 pip install --no-cache-dir --force-reinstall sentence-transformers==2.2.2
+
+# Install compatible GPU optimization packages
+pip install --no-cache-dir --force-reinstall xformers==0.0.29.post1 --index-url https://download.pytorch.org/whl/cu121 || true
 
 echo ""
 echo "4. Testing the fix..."
 echo "==================="
 python3 -c "
 try:
+    import torch
+    print(f'✅ PyTorch version: {torch.__version__}')
+    print(f'✅ CUDA available: {torch.cuda.is_available()}')
+    
     import huggingface_hub
     print(f'✅ HuggingFace Hub version: {huggingface_hub.__version__}')
     

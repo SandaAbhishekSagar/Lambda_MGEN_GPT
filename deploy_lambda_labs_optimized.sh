@@ -195,21 +195,34 @@ fix_huggingface_issues() {
     source lambda_gpu_env/bin/activate
     
     # Uninstall all problematic packages completely
-    pip uninstall -y huggingface-hub transformers sentence-transformers torch torchvision torchaudio || print_warning "Some packages not found for uninstall"
+    pip uninstall -y huggingface-hub transformers sentence-transformers torch torchvision torchaudio xformers accelerate bitsandbytes flash-attn || print_warning "Some packages not found for uninstall"
     
     # Clear pip cache
     pip cache purge || print_warning "Could not clear pip cache"
     
     # Install compatible versions in the correct order
     echo "📦 Installing compatible versions..."
+    
+    # First install PyTorch with CUDA support
+    pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+    
+    # Then install HuggingFace packages
     pip install --no-cache-dir huggingface-hub==0.19.4
     pip install --no-cache-dir transformers==4.35.2
     pip install --no-cache-dir sentence-transformers==2.2.2
+    
+    # Install compatible GPU optimization packages
+    pip install --no-cache-dir xformers==0.0.29.post1 --index-url https://download.pytorch.org/whl/cu121 || print_warning "xformers installation failed - continuing"
+    pip install --no-cache-dir accelerate==0.24.1 || print_warning "accelerate installation failed - continuing"
     
     # Verify the fix works
     echo "🧪 Verifying HuggingFace Hub compatibility fix..."
     python3 -c "
 try:
+    import torch
+    print(f'✅ PyTorch version: {torch.__version__}')
+    print(f'✅ CUDA available: {torch.cuda.is_available()}')
+    
     import huggingface_hub
     print(f'✅ HuggingFace Hub version: {huggingface_hub.__version__}')
     
