@@ -184,36 +184,19 @@ async def get_document_stats():
         if not chatbot:
             raise HTTPException(status_code=503, detail="Chatbot not initialized")
         
-        # Get collection info and count documents
-        collections = chatbot.chroma_service.get_batch_collections()
-        total_documents = 0
+        # Get unified collection info
+        collection_info = chatbot.chroma_service.get_collection_info()
+        total_documents = collection_info['total_documents']
         
-        logger.info(f"[LAMBDA GPU API] Found {len(collections)} collections to count")
-        
-        # Count documents in each collection (limit to first 100 for performance)
-        for i, collection_name in enumerate(collections[:100]):  # Limit to first 100 collections for performance
-            try:
-                collection = chatbot.chroma_service.client.get_collection(collection_name)
-                count = collection.count()
-                total_documents += count
-                if i < 5:  # Log first 5 for debugging
-                    logger.info(f"[LAMBDA GPU API] Collection {collection_name}: {count} documents")
-            except Exception as e:
-                logger.warning(f"Could not count collection {collection_name}: {e}")
-                continue
-        
-        # If we only counted first 100, estimate total
-        if len(collections) > 100:
-            avg_docs_per_collection = total_documents / 100
-            estimated_total = int(avg_docs_per_collection * len(collections))
-            logger.info(f"[LAMBDA GPU API] Estimated total documents: {estimated_total} (based on {total_documents} from first 100 collections)")
-            total_documents = estimated_total
+        logger.info(f"[LAMBDA GPU API] Unified collection: {collection_info['collection_name']} with {total_documents} documents")
         
         return {
             "total_documents": total_documents,
-            "total_collections": len(collections),
+            "total_collections": 1,  # Single unified collection
             "total_universities": 1,  # Northeastern University
-            "collections": collections[:10],  # Show first 10
+            "collection_name": collection_info['collection_name'],
+            "database": collection_info['database'],
+            "status": collection_info['status'],
             "cache_status": {
                 "query_cache_size": len(chatbot.embedding_manager.embeddings_cache),
                 "document_cache_size": len(chatbot.embedding_manager.document_embeddings)

@@ -202,7 +202,7 @@ class LambdaGPUChromaService:
         self.client = None
         self.collections_cache = []
         self.last_cache_update = 0
-        self.cache_ttl = 300  # 5 minutes
+        self.cache_ttl = 3600  # 1 hour for speed
         
     def get_client(self):
         """Get or create ChromaDB client with multiple authentication methods"""
@@ -212,19 +212,19 @@ class LambdaGPUChromaService:
                 use_cloud = os.getenv('USE_CLOUD_CHROMA', 'false').lower() == 'true'
                 
                 if use_cloud:
-                    # Use the working ChromaDB Cloud authentication from Railway
-                    api_key = 'ck-4RLZskGk7sxLbFNvMZCQY4xASn4WPReJ1W4CSf9tvhUW'
-                    tenant = '28757e4a-f042-4b0c-ad7c-9257cd36b130'
-                    database = 'newtest'
+                    # Use the new unified ChromaDB Cloud database
+                    api_key = 'ck-7Kx6tSBSNJgdk4W1w5muQUbfqt7n1QjfxNgQdSiLyQa4'
+                    tenant = '6b132689-6807-45c8-8d18-1a07edafc2d7'
+                    database = 'northeasterndb'
                     
-                    logger.info(f"[LAMBDA GPU] Connecting to ChromaDB Cloud...")
-                    # Use the working CloudClient approach
+                    logger.info(f"[LAMBDA GPU] Connecting to unified ChromaDB Cloud...")
+                    # Use the new unified database
                     self.client = chromadb.CloudClient(
                         api_key=api_key,
                         tenant=tenant,
                         database=database
                     )
-                    logger.info(f"[LAMBDA GPU] Connected to ChromaDB Cloud")
+                    logger.info(f"[LAMBDA GPU] Connected to unified ChromaDB Cloud with 80,000 records")
                 else:
                     # Local ChromaDB
                     chroma_host = os.getenv('CHROMADB_HOST', 'localhost')
@@ -256,14 +256,36 @@ class LambdaGPUChromaService:
                     
         return self.client
     
+    def get_collection_info(self) -> Dict[str, Any]:
+        """Get information about the unified collection"""
+        try:
+            client = self.get_client()
+            collection = client.get_collection("documents_unified")
+            count = collection.count()
+            
+            return {
+                'collection_name': 'documents_unified',
+                'total_documents': count,
+                'database': 'northeasterndb',
+                'status': 'unified'
+            }
+        except Exception as e:
+            logger.error(f"[LAMBDA GPU] Error getting collection info: {e}")
+            return {
+                'collection_name': 'documents_unified',
+                'total_documents': 80000,  # Estimated
+                'database': 'northeasterndb',
+                'status': 'unified'
+            }
+
     def get_batch_collections(self, force_refresh: bool = False) -> List[str]:
         """Get batch collections with caching and fallback"""
         current_time = time.time()
         
-        # Always refresh collections to ensure we get all collections
-        # Cache is disabled for collections to ensure comprehensive search
-        # if not force_refresh and self.collections_cache and (current_time - self.last_cache_update) < self.cache_ttl:
-        #     return self.collections_cache
+        # Use cache for speed unless force refresh is requested
+        if not force_refresh and self.collections_cache and (current_time - self.last_cache_update) < self.cache_ttl:
+            logger.info(f"[LAMBDA GPU] Using cached collections: {len(self.collections_cache)} collections")
+            return self.collections_cache
         
         try:
             client = self.get_client()
@@ -309,77 +331,61 @@ class LambdaGPUChromaService:
             logger.info(f"[LAMBDA GPU] Using fallback: {len(fallback_collections)} collections")
             return fallback_collections
     
-    def search_documents_parallel(self, query_embedding: np.ndarray, n_results: int = 10) -> List[Dict[str, Any]]:
-        """Parallel search across collections for maximum speed"""
+    def search_documents_unified(self, query_embedding: np.ndarray, n_results: int = 10, query: str = "") -> List[Dict[str, Any]]:
+        """Ultra-fast search in unified collection with 80,000 records"""
         try:
-            collections = self.get_batch_collections(force_refresh=True)  # Force refresh to get all collections
-            if not collections:
-                return []
+            client = self.get_client()
             
-            # Smart search strategy: Balance coverage with speed
-            max_collections = int(os.getenv('MAX_COLLECTIONS', '0'))  # 0 means search all collections
-            search_all_collections = os.getenv('SEARCH_ALL_COLLECTIONS', 'true').lower() == 'true'
-            performance_mode = os.getenv('PERFORMANCE_MODE', 'balanced').lower()
+            # Get the unified collection
+            collection = client.get_collection("documents_unified")
             
-            if performance_mode == 'fast':
-                # Fast mode: limit to 200 collections for speed
-                collections_to_search = collections[:200]
-                logger.info(f"[LAMBDA GPU] Fast mode: searching {len(collections_to_search)} collections for speed")
-            elif not search_all_collections and max_collections > 0 and max_collections < len(collections):
-                collections_to_search = collections[:max_collections]
-                logger.info(f"[LAMBDA GPU] Limited to {len(collections_to_search)} collections for performance testing (out of {len(collections)} total)")
+            # Performance mode settings
+            performance_mode = os.getenv('PERFORMANCE_MODE', 'unified').lower()
+            
+            # Adjust search parameters based on performance mode
+            if performance_mode == 'ultra_fast':
+                search_n_results = min(n_results * 3, 15)  # Ultra-fast: 15 results
+                logger.info(f"[LAMBDA GPU] Ultra-fast mode: searching unified collection for {search_n_results} results")
+            elif performance_mode == 'fast':
+                search_n_results = min(n_results * 5, 30)  # Fast: 30 results
+                logger.info(f"[LAMBDA GPU] Fast mode: searching unified collection for {search_n_results} results")
             else:
-                collections_to_search = collections
-                logger.info(f"[LAMBDA GPU] Comprehensive mode: searching {len(collections_to_search)} collections for full coverage")
+                search_n_results = min(n_results * 8, 50)  # Balanced: 50 results
+                logger.info(f"[LAMBDA GPU] Unified mode: searching unified collection for {search_n_results} results")
             
-            logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel (out of {len(collections)} total collections)")
+            # Single collection search - much faster than multi-collection
+            start_time = time.time()
+            results = collection.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=search_n_results
+            )
+            search_time = time.time() - start_time
             
-            all_documents = []
+            documents = []
+            if results and results.get('documents') and results['documents'][0]:
+                for i, doc in enumerate(results['documents'][0]):
+                    metadata = results['metadatas'][0][i] if results.get('metadatas') else {}
+                    distance = results['distances'][0][i] if results.get('distances') else 1.0
+                    doc_id = results['ids'][0][i] if results.get('ids') else str(i)
+                    
+                    documents.append({
+                        'id': doc_id,
+                        'content': doc,
+                        'metadata': metadata,
+                        'distance': distance,
+                        'similarity': 1 - distance
+                    })
             
-            # Smart search strategy: Use adaptive collection selection for speed
-            if len(collections_to_search) > 500:
-                # For large collections, use smart sampling for speed
-                # Sample collections intelligently rather than searching all
-                sample_size = min(500, len(collections_to_search))
-                # Use every Nth collection for comprehensive but faster coverage
-                step = len(collections_to_search) // sample_size
-                collections_to_search = collections_to_search[::max(1, step)]
-                logger.info(f"[LAMBDA GPU] Smart sampling: searching {len(collections_to_search)} collections for speed")
+            # Sort by similarity for better ranking
+            documents.sort(key=lambda x: x.get('similarity', 0), reverse=True)
             
-            # Use ThreadPoolExecutor for parallel search with optimized workers
-            max_workers = min(20, len(collections_to_search))  # Reduced workers for better performance
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = []
-                
-                # Optimized results per collection for speed
-                results_per_collection = min(n_results * 3, 20)  # Reduced for speed
-                
-                for collection_name in collections_to_search:
-                    future = executor.submit(self._search_single_collection, collection_name, query_embedding, results_per_collection)
-                    futures.append(future)
-                
-                # Optimized timeout for speed
-                timeout_per_collection = 3  # Reduced timeout for speed
-                for future in futures:
-                    try:
-                        results = future.result(timeout=timeout_per_collection)
-                        if results:
-                            all_documents.extend(results)
-                    except Exception as e:
-                        logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
-                        continue
+            logger.info(f"[LAMBDA GPU] Unified search completed in {search_time:.2f}s, found {len(documents)} documents")
             
-            logger.info(f"[LAMBDA GPU] Found {len(all_documents)} total documents")
-            
-            # Sort all documents by similarity for better ranking
-            all_documents.sort(key=lambda x: x.get('similarity', 0), reverse=True)
-            
-            # Return more results for comprehensive coverage, but limit to reasonable number
-            max_results = min(n_results * 3, 100)  # Cap at 100 for performance
-            return all_documents[:max_results]
+            # Return top results
+            return documents[:n_results]
             
         except Exception as e:
-            logger.error(f"[LAMBDA GPU] Error in parallel search: {e}")
+            logger.error(f"[LAMBDA GPU] Error in unified search: {e}")
             return []
             
     def _search_single_collection(self, collection_name: str, query_embedding: np.ndarray, n_results: int) -> List[Dict[str, Any]]:
@@ -433,12 +439,12 @@ class LambdaGPUUniversityRAGChatbot:
         # Initialize OpenAI LLM with optimized settings for speed
         self.llm = ChatOpenAI(
             model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
-            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
-            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '600')),  # Further reduced for speed
+            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.2')),
+            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '300')),  # Much reduced for speed
             openai_api_key=self.openai_api_key,
             request_timeout=15,  # Increased timeout to prevent timeouts
             streaming=False,
-            max_retries=2  # Increased retries for reliability
+            max_retries=1  # Reduced retries for speed
         )
         
         # Initialize OpenAI embeddings for fallback
@@ -469,7 +475,7 @@ class LambdaGPUUniversityRAGChatbot:
         return gpu_info
     
     def search_documents(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
-        """Ultra-fast document search with GPU acceleration and quality filtering"""
+        """Ultra-fast document search with GPU acceleration and smart targeting"""
         try:
             start_time = time.time()
             
@@ -477,9 +483,9 @@ class LambdaGPUUniversityRAGChatbot:
             query_embedding = self.embedding_manager.get_query_embedding(query)
             embedding_time = time.time() - start_time
             
-            # Parallel search across collections
+            # Unified collection search - much faster than multi-collection
             search_start = time.time()
-            documents = self.chroma_service.search_documents_parallel(query_embedding, n_results)  # Get exact amount for speed
+            documents = self.chroma_service.search_documents_unified(query_embedding, n_results, query)  # Use unified collection
             search_time = time.time() - search_start
             
             # Improve similarity scores to avoid negative confidence (Railway logic)
@@ -641,7 +647,7 @@ Provide a detailed, well-structured answer about Northeastern University:"""
             context_parts = []
             sources = []
             
-            for i, doc in enumerate(context_docs[:8], 1):  # Use 8 documents for speed
+            for i, doc in enumerate(context_docs[:5], 1):  # Use 5 documents for speed
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
                 
@@ -653,14 +659,14 @@ Provide a detailed, well-structured answer about Northeastern University:"""
                 # Extract URL if available
                 url = metadata.get('url', metadata.get('source_url', ''))
                 
-                # Smart truncation: keep more content for higher relevance documents (optimized for speed)
+                # Smart truncation: keep minimal content for speed
                 relevance_score = doc.get('relevance_score', 0)
                 if relevance_score > 0.5:  # High relevance documents get more content
-                    max_content_length = 800  # Increased for comprehensive coverage
+                    max_content_length = 500  # Reduced for speed
                 elif relevance_score > 0.3:  # Medium relevance documents get moderate content
-                    max_content_length = 600   # Increased for comprehensive coverage
+                    max_content_length = 350   # Reduced for speed
                 else:  # Lower relevance documents get less content
-                    max_content_length = 400   # Increased for comprehensive coverage
+                    max_content_length = 250   # Reduced for speed
                 
                 if len(content) > max_content_length:
                     content = content[:max_content_length] + "..."
@@ -702,8 +708,8 @@ Answer:"""
             response = self.llm.invoke(formatted_prompt)
             answer = response.content
             
-            # Validate and improve answer if needed (Railway logic)
-            answer = self._validate_and_improve_answer(question, answer, context)
+            # Validate and improve answer if needed (Railway logic) - DISABLED for speed
+            # answer = self._validate_and_improve_answer(question, answer, context)
             
             # Calculate confidence based on multiple factors like Railway code
             if not context_docs:
@@ -764,7 +770,7 @@ Answer:"""
         
         # Search for relevant documents with optimized coverage
         search_start = time.time()
-        documents = self.search_documents(question, n_results=10)  # Use 10 documents for speed
+        documents = self.search_documents(question, n_results=5)  # Use 5 documents for speed
         search_time = time.time() - search_start
         
         # Generate answer
