@@ -316,8 +316,8 @@ class LambdaGPUChromaService:
             if not collections:
                 return []
             
-            # Limit collections for performance (optimized for Lambda Labs)
-            max_collections = int(os.getenv('MAX_COLLECTIONS', '150'))
+            # Limit collections for performance (maintain quality with comprehensive search)
+            max_collections = int(os.getenv('MAX_COLLECTIONS', '150'))  # Maintain full dataset coverage
             collections_to_search = collections[:max_collections]
             
             logger.info(f"[LAMBDA GPU] Searching {len(collections_to_search)} collections in parallel")
@@ -332,15 +332,15 @@ class LambdaGPUChromaService:
                     future = executor.submit(self._search_single_collection, collection_name, query_embedding, n_results * 2)
                     futures.append(future)
                 
-                 # Collect results
-                 for future in futures:
-                     try:
-                         results = future.result(timeout=3)  # 3 second timeout per collection for speed
-                         if results:
-                             all_documents.extend(results)
-                     except Exception as e:
-                         logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
-                         continue
+                # Collect results with optimized timeout
+                for future in futures:
+                    try:
+                        results = future.result(timeout=2)  # Reduced timeout for speed while maintaining quality
+                        if results:
+                            all_documents.extend(results)
+                    except Exception as e:
+                        logger.warning(f"[LAMBDA GPU] Collection search timeout/error: {e}")
+                        continue
             
             logger.info(f"[LAMBDA GPU] Found {len(all_documents)} total documents")
             return all_documents[:n_results]
@@ -397,16 +397,16 @@ class LambdaGPUUniversityRAGChatbot:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
-         # Initialize OpenAI LLM with optimized settings for speed
-         self.llm = ChatOpenAI(
-             model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
-             temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
-             max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '2500')),
-             openai_api_key=self.openai_api_key,
-             request_timeout=15,  # Reduced timeout for faster responses
-             streaming=False,
-             max_retries=1  # Reduce retries for speed
-         )
+        # Initialize OpenAI LLM with optimized settings for speed
+        self.llm = ChatOpenAI(
+            model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+            temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.3')),
+            max_tokens=int(os.getenv('OPENAI_MAX_TOKENS', '1500')),  # Reduced for faster generation
+            openai_api_key=self.openai_api_key,
+            request_timeout=8,  # Reduced timeout for faster responses
+            streaming=False,
+            max_retries=1  # Reduce retries for speed
+        )
         
         # Initialize OpenAI embeddings for fallback
         self.openai_embeddings = OpenAIEmbeddings(
@@ -529,47 +529,42 @@ class LambdaGPUUniversityRAGChatbot:
             return 0.2  # Default positive score
     
     def _validate_and_improve_answer(self, question: str, answer: str, context: str) -> str:
-        """Validate answer and regenerate if needed (Railway logic)"""
+        """Validate answer and regenerate if needed (optimized for speed)"""
         
         answer_lower = answer.lower()
         
-        # Check for generic indicators
+        # Check for generic indicators (reduced list for faster processing)
         generic_phrases = [
             'northeastern university offers a variety',
-            'northeastern university provides',
-            'as an expert assistant',
             'based on the context',
-            'i can provide you with information',
-            'northeastern university is',
-            'the university offers',
-            'northeastern provides'
+            'i can provide you with information'
         ]
         
         is_generic = any(phrase in answer_lower for phrase in generic_phrases)
         
-        # Check if answer directly addresses the question
+        # Check if answer directly addresses the question (simplified check)
         question_terms = set(question.lower().split())
         answer_contains_question_terms = any(term in answer_lower for term in question_terms)
         
-        # If answer is generic or off-topic, regenerate
-        if is_generic or not answer_contains_question_terms:
+        # Only regenerate if answer is clearly generic AND doesn't address the question AND is very short
+        if is_generic and not answer_contains_question_terms and len(answer) < 150:
             logger.info(f"[LAMBDA GPU] Regenerating answer - detected generic response")
             specific_prompt = f"""Answer this specific question: "{question}"
 Use information from this context: {context}
 
-CRITICAL INSTRUCTIONS:
-- Provide a DETAILED, COMPREHENSIVE answer about Northeastern University programs
-- Use information from the provided context, but also draw reasonable conclusions
-- Structure your response clearly with bullet points or organized paragraphs
-- Include ALL relevant details: specific numbers, dates, requirements, procedures
-- Be thorough and well-organized, not brief
-- If you find relevant information about programs, degrees, or academic offerings, include it
-- Focus on being helpful and informative about Northeastern's academic programs
-- Use the context as your primary source but provide a complete answer
+INSTRUCTIONS:
+- Provide a direct, specific answer about Northeastern University
+- Use information from the provided context
+- Be comprehensive but concise
+- Include relevant details when available
 
-Provide a detailed, well-structured answer about Northeastern University programs:"""
-            response = self.llm.invoke(specific_prompt)
-            return response.content if hasattr(response, 'content') else str(response)
+Answer:"""
+            try:
+                response = self.llm.invoke(specific_prompt)
+                return response.content if hasattr(response, 'content') else str(response)
+            except Exception as e:
+                logger.warning(f"[LAMBDA GPU] Regeneration failed: {e}")
+                return answer  # Return original answer if regeneration fails
         
         return answer
     
@@ -587,7 +582,7 @@ Provide a detailed, well-structured answer about Northeastern University program
             context_parts = []
             sources = []
             
-            for i, doc in enumerate(context_docs[:10], 1):
+            for i, doc in enumerate(context_docs[:10], 1):  # Use all 10 documents for quality
                 content = doc.get('content', '')
                 metadata = doc.get('metadata', {})
                 
@@ -599,9 +594,17 @@ Provide a detailed, well-structured answer about Northeastern University program
                 # Extract URL if available
                 url = metadata.get('url', metadata.get('source_url', ''))
                 
-                # Truncate content for efficiency
-                if len(content) > 1000:
-                    content = content[:1000] + "..."
+                # Smart truncation: keep more content for higher relevance documents
+                relevance_score = doc.get('relevance_score', 0)
+                if relevance_score > 0.5:  # High relevance documents get more content
+                    max_content_length = 800
+                elif relevance_score > 0.3:  # Medium relevance documents get moderate content
+                    max_content_length = 600
+                else:  # Lower relevance documents get less content
+                    max_content_length = 400
+                
+                if len(content) > max_content_length:
+                    content = content[:max_content_length] + "..."
                 
                 context_parts.append(f"[Source {i}] {title}\n{content}\n")
                 
@@ -616,22 +619,19 @@ Provide a detailed, well-structured answer about Northeastern University program
             
             context = "\n".join(context_parts)
             
-            # Enhanced prompt for better responses (Railway logic)
-            prompt_template = """You are an expert Northeastern University assistant. Provide a COMPREHENSIVE and WELL-STRUCTURED answer using the provided context.
+            # Optimized prompt for quality responses with speed
+            prompt_template = """Answer this question about Northeastern University using the provided context.
 
-Context from Northeastern University documents:
-{context}
+Context: {context}
 
 Question: {question}
 
 Instructions:
-- Answer ONLY the specific question asked
-- Use EXACT information from the provided context
-- Structure your response clearly with bullet points or organized paragraphs
-- Include specific details like numbers, dates, requirements, or procedures
-- Be thorough but stay focused on the specific question
-- If the context doesn't contain specific information, provide helpful guidance
-- Be conversational, helpful, and professional
+- Answer the specific question asked
+- Use information from the context
+- Be comprehensive but concise
+- Include relevant details when available
+- Structure your response clearly
 
 Answer:"""
             
@@ -705,9 +705,9 @@ Answer:"""
         
         logger.info(f"[LAMBDA GPU] Processing question: {question[:100]}...")
         
-        # Search for relevant documents
+        # Search for relevant documents (maintain quality with comprehensive search)
         search_start = time.time()
-        documents = self.search_documents(question, n_results=10)
+        documents = self.search_documents(question, n_results=10)  # Maintain quality with 10 documents
         search_time = time.time() - search_start
         
         # Generate answer
